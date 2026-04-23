@@ -3,6 +3,7 @@ import pandas as pd
 import requests
 import json
 import re
+import os
 from google_sheets import (
     append_log_info,
     append_manager_log,
@@ -18,15 +19,37 @@ from prompts import get_full_analysis_prompt_claude, get_full_analysis_prompt_op
 import anthropic
 
 # ================= CONFIG =================
-DEEPGRAM_API_KEY = st.secrets["DEEPGRAM_API_KEY"]
-OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
-ANTHROPIC_API_KEY = st.secrets.get("ANTHROPIC_API_KEY")
+def read_secret(name, default=None):
+    value = st.secrets.get(name)
+    if value is None or str(value).strip() == "":
+        env_value = os.getenv(name)
+        if env_value is not None and str(env_value).strip() != "":
+            return env_value
+        return default
+    return value
+
+
+DEEPGRAM_API_KEY = read_secret("DEEPGRAM_API_KEY")
+OPENAI_API_KEY = read_secret("OPENAI_API_KEY")
+ANTHROPIC_API_KEY = read_secret("ANTHROPIC_API_KEY")
+
+missing_required = []
+if not DEEPGRAM_API_KEY:
+    missing_required.append("DEEPGRAM_API_KEY")
+if not OPENAI_API_KEY:
+    missing_required.append("OPENAI_API_KEY")
+
+if missing_required:
+    st.error(
+        "Відсутні обов'язкові секрети: "
+        + ", ".join(missing_required)
+        + ". Додайте їх у Streamlit Secrets (або environment variables) і перезапустіть застосунок."
+    )
+    st.stop()
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-claude_client = anthropic.Anthropic(
-    api_key=ANTHROPIC_API_KEY
-)
+claude_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
 
 LOG_SHEET_ID = "1gElj3hB5CX86YsVQFG2M9DpfvMUMPq2lfuSNj-ylN94"
 DICT_SHEET_ID = "1gElj3hB5CX86YsVQFG2M9DpfvMUMPq2lfuSNj-ylN94"
@@ -1745,6 +1768,10 @@ def extract_features_openai(dialogue, comment, kb_context="", replacements=None)
 
 
 def extract_features_claude(dialogue, comment, kb_context="", replacements=None):
+    if claude_client is None:
+        st.error("Claude API key не налаштований (ANTHROPIC_API_KEY).")
+        return {}
+
     base_prompt = get_full_analysis_prompt_claude(comment, kb_context)
     prompt = build_combined_analysis_prompt(base_prompt, dialogue, replacements or {})
 
@@ -1795,6 +1822,56 @@ def analyze_call_cached(ai_provider, url, call_date, dialogue, manager_comment, 
         kb_context,
         replacements,
     )
+
+
+def run_all_validators(features, dialogue, call, kb_data):
+    """
+    Єдина точка входу для всіх валідаторів.
+    Порядок виклику критичний — не змінювати.
+    """
+    # 1. Презентація — залежить від KB, незалежна від інших
+    features = normalize_presentation_level(features, dialogue, kb_data)
+
+    # 2. Бонус — незалежний від презентації
+    features = validate_bonus_features(features, dialogue)
+
+    # 3. Діалог — визначає is_limited_dialogue і client_driving
+    features = validate_dialogue_exceptions(features, dialogue)
+
+    # 4. Додумування — перевіряє репліки менеджера і клієнта
+    features = validate_assumption_made(features, dialogue)
+
+    # 5. Заперечення і утримання — залежить від client_wants_to_end
+    features = validate_objection_and_retention(features, dialogue)
+
+    # 6. Причина в картці — читає коментар менеджера
+    features = validate_card_reason(features, call["manager_comment"])
+
+    # 7. Картка — залежить від followup_type і card_has_reason
+    features = validate_card_features(features)
+
+    # 8. Час у картці — читає коментар менеджера, після validate_card_features
+    features = validate_card_followup_time(features, call["manager_comment"])
+
+    # 9. Домовленість — уточнює followup_type по тексту
+    features = validate_followup_type(features, dialogue)
+
+    # 10. Картку повторно — бо followup_type міг змінитись на кроці 9
+    features = validate_card_features(features)
+
+    # 11. Професіоналізм — перевіряє third party
+    features = validate_professionalism_features(features, dialogue)
+
+    # 12. Заборонені слова — незалежний
+    features = validate_forbidden_words(features, dialogue)
+
+    # 13. Дружнє питання — уточнює friendly_question
+    features = validate_friendly_question(features, dialogue)
+
+    # 14. Спеціальні стани клієнта — has_farewell, client_sick, military
+    features = validate_special_client_states(features, dialogue)
+
+    return features
 
 
 # ================= SCORING =================
@@ -2394,19 +2471,7 @@ if run_openai or run_claude:
 
             clean_dialogue = apply_replacements(transcript, replacements)
             features = analysis_result.get("features", {})
-            features = normalize_presentation_level(features, clean_dialogue, kb_data)
-            features = validate_bonus_features(features, clean_dialogue)
-            features = validate_dialogue_exceptions(features, clean_dialogue)
-            features = validate_assumption_made(features, clean_dialogue)
-            features = validate_objection_and_retention(features, clean_dialogue)
-            features = validate_card_reason(features, call["manager_comment"])
-            features = validate_card_features(features)
-            features = validate_card_followup_time(features, call["manager_comment"])
-            features = validate_followup_type(features, clean_dialogue)
-            features = validate_professionalism_features(features, clean_dialogue)
-            features = validate_forbidden_words(features, clean_dialogue)
-            features = validate_friendly_question(features, clean_dialogue)
-            features = validate_special_client_states(features, clean_dialogue)
+            features = run_all_validators(features, clean_dialogue, call, kb_data)
             if not features:
                 st.warning("Помилка аналізу")
                 continue
