@@ -1190,13 +1190,14 @@ def validate_followup_type(features, dialogue):
         ["зателефоную", "наберу", "передзвоню", "я вам зателефоную", "я вас наберу"],
     )
 
-    # "ближче до X", "після X" (цифра або словесний числівник) + підтвердження клієнта = exact_time.
+    # "ближче до X", "після X" (цифра або словесний числівник) + підтвердження = exact_time.
     # Також: клієнт сам назвав конкретний час/дату і є будь-яке підтвердження = exact_time.
-    if features.get("followup_type") in {"none", "offer"}:
-        if manager_has_approx_exact_time and (client_confirmed_followup or manager_confirmed_followup):
-            features["followup_type"] = "exact_time"
-        elif client_proposed_exact and (client_confirmed_followup or manager_confirmed_followup):
-            features["followup_type"] = "exact_time"
+    if (
+        manager_has_approx_exact_time and (client_confirmed_followup or manager_confirmed_followup)
+    ) or (
+        client_proposed_exact and (client_confirmed_followup or manager_confirmed_followup)
+    ):
+        features["followup_type"] = "exact_time"
         return features
 
     if features.get("followup_type") != "exact_time":
