@@ -1142,6 +1142,22 @@ def validate_followup_type(features, dialogue):
     _, client_lines = extract_role_lines(dialogue)
     client_text = " ".join(client_lines).lower()
 
+    WORD_HOURS = (
+        r"(першої|другої|третьої|четвертої|п'ятої|шостої|сьомої|восьмої|"
+        r"дев'ятої|десятої|одинадцятої|дванадцятої|тринадцятої|чотирнадцятої|"
+        r"п'ятнадцятої|шістнадцятої|сімнадцятої|вісімнадцятої|дев'ятнадцятої|двадцятої)"
+    )
+    WORD_HOURS_GEN = (
+        r"(одного|двох|трьох|чотирьох|п'яти|шести|семи|восьми|"
+        r"дев'яти|десяти|одинадцяти|дванадцяти)"
+    )
+    WORD_DATES = (
+        r"(першого|другого|третього|четвертого|п'ятого|шостого|сьомого|восьмого|"
+        r"дев'ятого|десятого|одинадцятого|дванадцятого|тринадцятого|чотирнадцятого|"
+        r"п'ятнадцятого|шістнадцятого|сімнадцятого|вісімнадцятого|дев'ятнадцятого|"
+        r"двадцятого|двадцять першого|тридцятого|тридцять першого)"
+    )
+
     manager_has_approx_exact_time = any(
         re.search(pattern, manager_text)
         for pattern in [
@@ -1149,16 +1165,33 @@ def validate_followup_type(features, dialogue):
             r"\bближче\s+\d{1,2}\b",
             r"\bпісля\s+\d{1,2}\b",
             r"\bпісля\s+\d{1,2}\s*год",
+            rf"\bближче\s+до\s+{WORD_HOURS}\b",
+            rf"\bближче\s+до\s+{WORD_HOURS_GEN}\b",
+            rf"\bпісля\s+{WORD_HOURS}\b",
+            rf"\bпісля\s+{WORD_HOURS_GEN}\b",
         ]
     )
+
+    client_proposed_exact = any(
+        re.search(pattern, client_text)
+        for pattern in [
+            r"\bпісля\s+\d{1,2}\b",
+            rf"\bпісля\s+{WORD_HOURS_GEN}\b",
+            rf"\bпісля\s+{WORD_DATES}(\s+числа)?\b",
+        ]
+    )
+
     client_confirmed_followup = has_any_marker(
         client_text,
         ["добре", "дякую", "ага", "домовились", "окей", "добре, все"],
     )
 
-    # "ближче до X", "після X" + підтвердження клієнта = exact_time.
+    # "ближче до X", "після X" (цифра або словесний числівник) + підтвердження клієнта = exact_time.
+    # Також: клієнт сам назвав конкретний час/дату і є будь-яке підтвердження = exact_time.
     if features.get("followup_type") in {"none", "offer"}:
         if manager_has_approx_exact_time and client_confirmed_followup:
+            features["followup_type"] = "exact_time"
+        elif client_proposed_exact and client_confirmed_followup:
             features["followup_type"] = "exact_time"
         return features
 
