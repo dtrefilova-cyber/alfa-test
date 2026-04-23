@@ -190,17 +190,23 @@ def write_to_google_sheet(sheet, meta, scores, start_column=1, start_row=1, crit
             (f"{col_letter}{start_row + 2}", meta.get("qa_manager", "")),
             (f"{col_letter}{start_row + 3}", meta.get("check_date", "")),
         ]
+        last_score_row = criteria_start_row - 1
 
         for key, value in scores.items():
             if key in CRITERIA_ROWS:
                 row = criteria_start_row + (CRITERIA_ROWS[key] - 5)
                 updates.append((f"{col_letter}{row}", format_score_sheet(value)))
+                last_score_row = max(last_score_row, row)
 
         if updates:
             sheet.batch_update(
                 [{"range": cell, "values": [[val]]} for cell, val in updates],
                 value_input_option="RAW",
             )
+            # Записати цифру 1 через один рядок після останньої оцінки
+            marker_row = last_score_row + 2
+            marker_col = column
+            sheet.update_cell(marker_row, marker_col, 1)
 
         return True
     except Exception as e:
