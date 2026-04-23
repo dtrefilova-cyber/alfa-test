@@ -544,199 +544,55 @@ def has_any_marker(text, markers):
 
 
 def normalize_presentation_level(features, dialogue, kb_data):
+    """
+    Презентація визначається ТІЛЬКИ кодом через KB.
+    LLM не бере участі у визначенні presentation_level.
+    Правило: є продукт/активність/лояльність з KB → full, інакше → none.
+    """
     manager_lines, _ = extract_role_lines(dialogue)
     manager_text = " ".join(manager_lines).lower()
 
     if not manager_text:
+        features["presentation_level"] = "none"
         return features
 
-    level = features.get("presentation_level", "none")
-    has_bonus_word = "бонус" in manager_text
+    # --- Перевірка 1: продукт або активність з KB ---
     has_product_mention = detect_presentation(dialogue, kb_data)
 
+    # --- Перевірка 2: програма лояльності (монетки, медалі тощо) ---
     loyalty_markers = [
-        "програм",
-        "лояльн",
         "монет",
         "медал",
-        "спін",
-        "спини",
-        "підбірк",
-        "добірк",
-        "новинк",
-        "продукт",
-        "слот",
+        "програм лояльн",
+        "програма лояльності",
+        "рівень лояльності",
     ]
-    location_markers = [
-        "на сайті",
-        "в додатку",
-        "у додатку",
-        "в особистому кабінеті",
-        "в особистому",
-        "у розділі",
-        "в розділі",
-        "знайдете",
-        "можна знайти",
-        "де знайти",
-        "на головній",
-    ]
-    sent_markers = [
-        "надішлю",
-        "відправлю",
-        "скину",
-        "на пошту",
-        "у смс",
-        "в смс",
-        "в вайбер",
-        "у вайбер",
-        "в телеграм",
-        "у телеграм",
-    ]
-    explanation_markers = [
-        "це ",
-        "там ",
-        "є ",
-        "зможете",
-        "потрібно",
-        "треба",
-    ]
-    mechanics_markers = [
-        "запустили активність",
-        "запустили нову активність",
-        "щоденн",
-        "щотиж",
-        "щомісяч",
-        "депозит",
-        "поповнен",
-        "накопич",
-        "квитк",
-        "робите",
-        "отримуєте",
-        "отримувати",
-        "за свої",
-        "за депозит",
-        "умови",
-        "доступні рівні",
-    ]
-    intent_only_markers = [
-        "хотіла розповісти про",
-        "хочу розповісти про",
-        "хотів розповісти про",
-        "хочу вас проінформувати",
-        "хотіла вас проінформувати",
-        "хотів вас проінформувати",
-    ]
-
     has_loyalty_mention = has_any_marker(manager_text, loyalty_markers)
-    has_location = has_any_marker(manager_text, location_markers)
-    has_sent_info = has_any_marker(manager_text, sent_markers)
-    has_explanation = has_any_marker(manager_text, explanation_markers)
-    has_mechanics = has_any_marker(manager_text, mechanics_markers)
-    has_amounts = re.search(r"(?<!\w)\d{2,5}(?!\w)", manager_text) is not None
-    has_presentation_explanation = (
-        has_explanation
-        or has_mechanics
-        or (has_amounts and ("депозит" in manager_text or "квитк" in manager_text))
-    )
 
-    bonus_only = has_bonus_word and not (has_product_mention or has_loyalty_mention)
-    if bonus_only:
-        features["presentation_level"] = "none"
-        return features
-
-    value_markers = ["вейдж", "відіграш", "без відіграш", "депозит", "%", "грн"]
-    duration_markers = ["годин", "днів", "48", "24", "термін"]
-    has_bonus_conditions = (
-        has_any_marker(manager_text, value_markers)
-        or has_any_marker(manager_text, duration_markers)
-        or re.search(r"(?<!\w)\d+\s*(грн|%|фс|спін)", manager_text) is not None
-    )
-    if has_bonus_conditions and not has_product_mention and not has_loyalty_mention:
-        features["presentation_level"] = "none"
-        return features
-
-    # Жорсткий скид: якщо менеджер явно говорив про бонуси (тип/назва бонусу),
-    # але відсутня справжня структура презентації сайту/продукту
-    # (локація + механіка/пояснення/лояльність) — це бонус, не презентація.
-    # Це перекриває хибне спрацювання detect_presentation (напр. KB-підрядок "футбол"
-    # у описі спорт-бонусу).
-    strong_bonus_type_markers = [
-        "фс",
-        "fs",
-        "фріспін",
-        "фриспін",
-        "кешбек",
-        "бездеп",
-        "фрібет",
-        "захист ставк",
+    # --- Виключення: бонусний контекст без продукту ---
+    # Якщо є явні ознаки бонусу від менеджера — перевіряємо чи є продукт поруч
+    bonus_only_markers = [
         "від себе",
         "від менеджера",
-        "без вейдж",
-        "без відіграш",
-        "обертів",
+        "залишу бонус",
+        "залишаю бонус",
+        "залишив бонус",
+        "залишила бонус",
+        "нарахую бонус",
+        "бонус від менеджера",
     ]
-    has_strong_bonus_type = has_any_marker(manager_text, strong_bonus_type_markers) or has_bonus_word
-    has_real_presentation_structure = has_location and (
-        has_mechanics or has_presentation_explanation or has_loyalty_mention
-    )
-    # Якщо є згадка програми лояльності (монетки, медалі тощо) — жорсткий скид не застосовується,
-    # бо це самостійний інфопривід незалежно від наявності бонусу.
-    if has_strong_bonus_type and not has_real_presentation_structure and not has_loyalty_mention:
+    has_bonus_offer = has_any_marker(manager_text, bonus_only_markers)
+
+    # Якщо є тільки бонус без продукту і без лояльності — не презентація
+    if has_bonus_offer and not has_product_mention and not has_loyalty_mention:
         features["presentation_level"] = "none"
         return features
 
-    has_intent_only = has_any_marker(manager_text, intent_only_markers)
-    has_loyalty_without_details = (
-        has_loyalty_mention
-        and not has_product_mention
-        and not has_location
-        and not has_sent_info
-        and not has_presentation_explanation
-    )
-    if has_intent_only and has_loyalty_without_details:
-        features["presentation_level"] = "none"
-        return features
-
-    has_concrete_presentation = (
-        has_product_mention
-        or (
-            has_loyalty_mention
-            and (has_location or has_sent_info or has_presentation_explanation)
-        )
-    )
-
-    if has_concrete_presentation:
+    # --- Основне правило ---
+    if has_product_mention or has_loyalty_mention:
         features["presentation_level"] = "full"
-    elif level not in {"none", "partial", "full"}:
+    else:
         features["presentation_level"] = "none"
-
-    if features.get("presentation_level") in {"full", "partial"}:
-        presentation_action_verbs = [
-            "розкажу про",
-            "розповім про",
-            "хотіла розповісти",
-            "хочу розповісти",
-            "хотів розповісти",
-            "хотіла розказати",
-            "хочу розказати",
-            "хотів розказати",
-            "хотіла представити",
-            "хочу представити",
-            "хотіла презентувати",
-            "хочу презентувати",
-            "презентую",
-            "представлю",
-            "запустили активність",
-            "запустили нову активність",
-            "звертаю вашу увагу на",
-            "звертаю увагу на",
-            "зверніть увагу на",
-            "ознайомлю вас",
-            "проведу екскурсію",
-        ]
-        has_presentation_verb = has_any_marker(manager_text, presentation_action_verbs)
-        if has_bonus_word and has_strong_bonus_type and not has_presentation_verb and not has_loyalty_mention:
-            features["presentation_level"] = "none"
 
     return features
 
