@@ -1,0 +1,8 @@
+streamlit
+openai
+deepgram-sdk
+pandas
+openpyxl
+gspread
+google-auth
+anthropic>=0.25.0
