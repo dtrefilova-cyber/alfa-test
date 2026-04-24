@@ -3,7 +3,6 @@ import pandas as pd
 import requests
 import json
 import re
-import os
 from google_sheets import (
     append_log_info,
     append_manager_log,
@@ -18,38 +17,18 @@ from openai import OpenAI
 from prompts import get_full_analysis_prompt_claude, get_full_analysis_prompt_openai
 import anthropic
 
+st.set_page_config(page_title="QA-5", layout="wide")
+
 # ================= CONFIG =================
-def read_secret(name, default=None):
-    value = st.secrets.get(name)
-    if value is None or str(value).strip() == "":
-        env_value = os.getenv(name)
-        if env_value is not None and str(env_value).strip() != "":
-            return env_value
-        return default
-    return value
-
-
-DEEPGRAM_API_KEY = read_secret("DEEPGRAM_API_KEY")
-OPENAI_API_KEY = read_secret("OPENAI_API_KEY")
-ANTHROPIC_API_KEY = read_secret("ANTHROPIC_API_KEY")
-
-missing_required = []
-if not DEEPGRAM_API_KEY:
-    missing_required.append("DEEPGRAM_API_KEY")
-if not OPENAI_API_KEY:
-    missing_required.append("OPENAI_API_KEY")
-
-if missing_required:
-    st.error(
-        "Відсутні обов'язкові секрети: "
-        + ", ".join(missing_required)
-        + ". Додайте їх у Streamlit Secrets (або environment variables) і перезапустіть застосунок."
-    )
-    st.stop()
+DEEPGRAM_API_KEY = st.secrets["DEEPGRAM_API_KEY"]
+OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+ANTHROPIC_API_KEY = st.secrets.get("ANTHROPIC_API_KEY")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-claude_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
+claude_client = anthropic.Anthropic(
+    api_key=ANTHROPIC_API_KEY
+)
 
 LOG_SHEET_ID = "1gElj3hB5CX86YsVQFG2M9DpfvMUMPq2lfuSNj-ylN94"
 DICT_SHEET_ID = "1gElj3hB5CX86YsVQFG2M9DpfvMUMPq2lfuSNj-ylN94"
@@ -64,7 +43,7 @@ CLAUDE_MAX_OUTPUT_TOKENS = int(st.secrets.get("CLAUDE_MAX_OUTPUT_TOKENS", 2200))
 # ================= HEADER =================
 st.markdown("""
 <div class="card">
-    <h2 style="margin:0;">🎧 QA-10</h2>
+    <h2 style="margin:0;">🎧 QA-5</h2>
     <span style="color:#aaa;">Аналіз дзвінків</span>
 </div>
 """, unsafe_allow_html=True)
@@ -161,10 +140,12 @@ if not managers_config:
 
 # ================= INPUT =================
 calls = []
-for row in range(5):
-    col1, col2 = st.columns(2)
-    for col, idx in zip([col1, col2], [row * 2 + 1, row * 2 + 2]):
-        with col.expander(f"📞 Дзвінок {idx}"):
+result_slots = []
+input_cols = st.columns(5)
+for col_idx, col in enumerate(input_cols):
+    idx = col_idx + 1
+    with col:
+        with st.expander(f"📞 Дзвінок {idx}", expanded=True):
             audio_url = st.text_input("Посилання", key=f"url_{idx}")
             qa_manager = st.selectbox("QA", qa_managers_list, key=f"qa_{idx}")
             selected_project = st.selectbox(
@@ -199,19 +180,16 @@ for row in range(5):
                 ["правильно нараховано", "помилково нараховано", "не потрібно"],
                 key=f"bonus_{idx}"
             )
-            repeat_col, completion_col = st.columns(2)
-            with repeat_col:
-                repeat_call = st.selectbox(
-                    "Передзвон",
-                    ["так, був протягом години", "так, був протягом 2 годин", "ні, не було"],
-                    key=f"repeat_{idx}"
-                )
-            with completion_col:
-                call_completion_status = st.selectbox(
-                    "Завершення виклику",
-                    call_completion_statuses,
-                    key=f"call_completion_{idx}"
-                )
+            repeat_call = st.selectbox(
+                "Передзвон",
+                ["так, був протягом години", "так, був протягом 2 годин", "ні, не було"],
+                key=f"repeat_{idx}"
+            )
+            call_completion_status = st.selectbox(
+                "Завершення виклику",
+                call_completion_statuses,
+                key=f"call_completion_{idx}"
+            )
             manager_comment = st.text_area("Коментар", key=f"comment_{idx}")
 
             calls.append({
@@ -228,6 +206,7 @@ for row in range(5):
                 "call_completion_status": call_completion_status,
                 "manager_comment": manager_comment,
             })
+        result_slots.append(st.container())
 
 # ================= TRANSCRIPTION =================
 def post_process_transcript(text: str) -> str:
@@ -544,55 +523,199 @@ def has_any_marker(text, markers):
 
 
 def normalize_presentation_level(features, dialogue, kb_data):
-    """
-    Презентація визначається ТІЛЬКИ кодом через KB.
-    LLM не бере участі у визначенні presentation_level.
-    Правило: є продукт/активність/лояльність з KB → full, інакше → none.
-    """
     manager_lines, _ = extract_role_lines(dialogue)
     manager_text = " ".join(manager_lines).lower()
 
     if not manager_text:
-        features["presentation_level"] = "none"
         return features
 
-    # --- Перевірка 1: продукт або активність з KB ---
+    level = features.get("presentation_level", "none")
+    has_bonus_word = "бонус" in manager_text
     has_product_mention = detect_presentation(dialogue, kb_data)
 
-    # --- Перевірка 2: програма лояльності (монетки, медалі тощо) ---
     loyalty_markers = [
+        "програм",
+        "лояльн",
         "монет",
         "медал",
-        "програм лояльн",
-        "програма лояльності",
-        "рівень лояльності",
+        "спін",
+        "спини",
+        "підбірк",
+        "добірк",
+        "новинк",
+        "продукт",
+        "слот",
     ]
+    location_markers = [
+        "на сайті",
+        "в додатку",
+        "у додатку",
+        "в особистому кабінеті",
+        "в особистому",
+        "у розділі",
+        "в розділі",
+        "знайдете",
+        "можна знайти",
+        "де знайти",
+        "на головній",
+    ]
+    sent_markers = [
+        "надішлю",
+        "відправлю",
+        "скину",
+        "на пошту",
+        "у смс",
+        "в смс",
+        "в вайбер",
+        "у вайбер",
+        "в телеграм",
+        "у телеграм",
+    ]
+    explanation_markers = [
+        "це ",
+        "там ",
+        "є ",
+        "зможете",
+        "потрібно",
+        "треба",
+    ]
+    mechanics_markers = [
+        "запустили активність",
+        "запустили нову активність",
+        "щоденн",
+        "щотиж",
+        "щомісяч",
+        "депозит",
+        "поповнен",
+        "накопич",
+        "квитк",
+        "робите",
+        "отримуєте",
+        "отримувати",
+        "за свої",
+        "за депозит",
+        "умови",
+        "доступні рівні",
+    ]
+    intent_only_markers = [
+        "хотіла розповісти про",
+        "хочу розповісти про",
+        "хотів розповісти про",
+        "хочу вас проінформувати",
+        "хотіла вас проінформувати",
+        "хотів вас проінформувати",
+    ]
+
     has_loyalty_mention = has_any_marker(manager_text, loyalty_markers)
+    has_location = has_any_marker(manager_text, location_markers)
+    has_sent_info = has_any_marker(manager_text, sent_markers)
+    has_explanation = has_any_marker(manager_text, explanation_markers)
+    has_mechanics = has_any_marker(manager_text, mechanics_markers)
+    has_amounts = re.search(r"(?<!\w)\d{2,5}(?!\w)", manager_text) is not None
+    has_presentation_explanation = (
+        has_explanation
+        or has_mechanics
+        or (has_amounts and ("депозит" in manager_text or "квитк" in manager_text))
+    )
 
-    # --- Виключення: бонусний контекст без продукту ---
-    # Якщо є явні ознаки бонусу від менеджера — перевіряємо чи є продукт поруч
-    bonus_only_markers = [
-        "від себе",
-        "від менеджера",
-        "залишу бонус",
-        "залишаю бонус",
-        "залишив бонус",
-        "залишила бонус",
-        "нарахую бонус",
-        "бонус від менеджера",
-    ]
-    has_bonus_offer = has_any_marker(manager_text, bonus_only_markers)
-
-    # Якщо є тільки бонус без продукту і без лояльності — не презентація
-    if has_bonus_offer and not has_product_mention and not has_loyalty_mention:
+    bonus_only = has_bonus_word and not (has_product_mention or has_loyalty_mention)
+    if bonus_only:
         features["presentation_level"] = "none"
         return features
 
-    # --- Основне правило ---
-    if has_product_mention or has_loyalty_mention:
-        features["presentation_level"] = "full"
-    else:
+    value_markers = ["вейдж", "відіграш", "без відіграш", "депозит", "%", "грн"]
+    duration_markers = ["годин", "днів", "48", "24", "термін"]
+    has_bonus_conditions = (
+        has_any_marker(manager_text, value_markers)
+        or has_any_marker(manager_text, duration_markers)
+        or re.search(r"(?<!\w)\d+\s*(грн|%|фс|спін)", manager_text) is not None
+    )
+    if has_bonus_conditions and not has_product_mention and not has_loyalty_mention:
         features["presentation_level"] = "none"
+        return features
+
+    # Жорсткий скид: якщо менеджер явно говорив про бонуси (тип/назва бонусу),
+    # але відсутня справжня структура презентації сайту/продукту
+    # (локація + механіка/пояснення/лояльність) — це бонус, не презентація.
+    # Це перекриває хибне спрацювання detect_presentation (напр. KB-підрядок "футбол"
+    # у описі спорт-бонусу).
+    strong_bonus_type_markers = [
+        "фс",
+        "fs",
+        "фріспін",
+        "фриспін",
+        "кешбек",
+        "бездеп",
+        "фрібет",
+        "захист ставк",
+        "від себе",
+        "від менеджера",
+        "без вейдж",
+        "без відіграш",
+        "обертів",
+    ]
+    has_strong_bonus_type = has_any_marker(manager_text, strong_bonus_type_markers) or has_bonus_word
+    has_real_presentation_structure = has_location and (
+        has_mechanics or has_presentation_explanation or has_loyalty_mention
+    )
+    # Якщо є згадка програми лояльності (монетки, медалі тощо) — жорсткий скид не застосовується,
+    # бо це самостійний інфопривід незалежно від наявності бонусу.
+    if has_strong_bonus_type and not has_real_presentation_structure and not has_loyalty_mention:
+        features["presentation_level"] = "none"
+        return features
+
+    has_intent_only = has_any_marker(manager_text, intent_only_markers)
+    has_loyalty_without_details = (
+        has_loyalty_mention
+        and not has_product_mention
+        and not has_location
+        and not has_sent_info
+        and not has_presentation_explanation
+    )
+    if has_intent_only and has_loyalty_without_details:
+        features["presentation_level"] = "none"
+        return features
+
+    has_concrete_presentation = (
+        has_product_mention
+        or (
+            has_loyalty_mention
+            and (has_location or has_sent_info or has_presentation_explanation)
+        )
+    )
+
+    if has_concrete_presentation:
+        features["presentation_level"] = "full"
+    elif level not in {"none", "partial", "full"}:
+        features["presentation_level"] = "none"
+
+    if features.get("presentation_level") in {"full", "partial"}:
+        presentation_action_verbs = [
+            "розкажу про",
+            "розповім про",
+            "хотіла розповісти",
+            "хочу розповісти",
+            "хотів розповісти",
+            "хотіла розказати",
+            "хочу розказати",
+            "хотів розказати",
+            "хотіла представити",
+            "хочу представити",
+            "хотіла презентувати",
+            "хочу презентувати",
+            "презентую",
+            "представлю",
+            "запустили активність",
+            "запустили нову активність",
+            "звертаю вашу увагу на",
+            "звертаю увагу на",
+            "зверніть увагу на",
+            "ознайомлю вас",
+            "проведу екскурсію",
+        ]
+        has_presentation_verb = has_any_marker(manager_text, presentation_action_verbs)
+        if has_bonus_word and has_strong_bonus_type and not has_presentation_verb and not has_loyalty_mention:
+            features["presentation_level"] = "none"
 
     return features
 
@@ -1142,22 +1265,6 @@ def validate_followup_type(features, dialogue):
     _, client_lines = extract_role_lines(dialogue)
     client_text = " ".join(client_lines).lower()
 
-    WORD_HOURS = (
-        r"(першої|другої|третьої|четвертої|п'ятої|шостої|сьомої|восьмої|"
-        r"дев'ятої|десятої|одинадцятої|дванадцятої|тринадцятої|чотирнадцятої|"
-        r"п'ятнадцятої|шістнадцятої|сімнадцятої|вісімнадцятої|дев'ятнадцятої|двадцятої)"
-    )
-    WORD_HOURS_GEN = (
-        r"(одного|двох|трьох|чотирьох|п'яти|шести|семи|восьми|"
-        r"дев'яти|десяти|одинадцяти|дванадцяти)"
-    )
-    WORD_DATES = (
-        r"(першого|другого|третього|четвертого|п'ятого|шостого|сьомого|восьмого|"
-        r"дев'ятого|десятого|одинадцятого|дванадцятого|тринадцятого|чотирнадцятого|"
-        r"п'ятнадцятого|шістнадцятого|сімнадцятого|вісімнадцятого|дев'ятнадцятого|"
-        r"двадцятого|двадцять першого|тридцятого|тридцять першого)"
-    )
-
     manager_has_approx_exact_time = any(
         re.search(pattern, manager_text)
         for pattern in [
@@ -1165,39 +1272,17 @@ def validate_followup_type(features, dialogue):
             r"\bближче\s+\d{1,2}\b",
             r"\bпісля\s+\d{1,2}\b",
             r"\bпісля\s+\d{1,2}\s*год",
-            rf"\bближче\s+до\s+{WORD_HOURS}\b",
-            rf"\bближче\s+до\s+{WORD_HOURS_GEN}\b",
-            rf"\bпісля\s+{WORD_HOURS}\b",
-            rf"\bпісля\s+{WORD_HOURS_GEN}\b",
         ]
     )
-
-    client_proposed_exact = any(
-        re.search(pattern, client_text)
-        for pattern in [
-            r"\bпісля\s+\d{1,2}\b",
-            rf"\bпісля\s+{WORD_HOURS_GEN}\b",
-            rf"\bпісля\s+{WORD_DATES}(\s+числа)?\b",
-        ]
-    )
-
     client_confirmed_followup = has_any_marker(
         client_text,
         ["добре", "дякую", "ага", "домовились", "окей", "добре, все"],
     )
-    manager_confirmed_followup = has_any_marker(
-        manager_text,
-        ["зателефоную", "наберу", "передзвоню", "я вам зателефоную", "я вас наберу"],
-    )
 
-    # "ближче до X", "після X" (цифра або словесний числівник) + підтвердження = exact_time.
-    # Також: клієнт сам назвав конкретний час/дату і є будь-яке підтвердження = exact_time.
-    if (
-        manager_has_approx_exact_time and (client_confirmed_followup or manager_confirmed_followup)
-    ) or (
-        client_proposed_exact and (client_confirmed_followup or manager_confirmed_followup)
-    ):
-        features["followup_type"] = "exact_time"
+    # "ближче до X", "після X" + підтвердження клієнта = exact_time.
+    if features.get("followup_type") in {"none", "offer"}:
+        if manager_has_approx_exact_time and client_confirmed_followup:
+            features["followup_type"] = "exact_time"
         return features
 
     if features.get("followup_type") != "exact_time":
@@ -1329,16 +1414,14 @@ def validate_objection_and_retention(features, dialogue):
         "не до гри",
         "не доіг",
         "не доігр",
-        "не цікаво грати",
-        "нецікаво грати",
+        "не цікаво",
+        "нецікаво",
         "не хочу бонус",
-        "не хочу ніяких бонусів",
-        "не граю",
+        "не хочу продукт",
+        "не потрібно",
+        "не треба",
         "не буду грати",
-        "більше не граю",
-        "кинув грати",
-        "завязав з грою",
-        "не займаюсь цим",
+        "не хочу",
     ]
     real_retention_markers = [
         "буквально хвилин",
@@ -1576,16 +1659,14 @@ def validate_special_client_states(features, dialogue):
 
     farewell_markers = [
         "до побачення", "до зустрічі", "всього доброго",
-        "всього найкращого", "бажаю найкращого",
+        "всього найкращого", "бажаю найкращого", "найкращого",
         "бувайте", "бувай", "на все добре",
         "щасливо", "до зв'язку",
         "на зв'язку", "будемо на зв'язку",
-        "передзвоню", "наберу вас", "наберу пізніше",
+        "передзвоню", "наберу вас", "наберу пізніше", "передзвоніть",
         "гарного дня", "гарного вечора", "гарного тижня", "гарних вихідних",
         "приємного дня", "приємного вечора",
         "вдалого дня", "вдалого вечора",
-        "бережіть себе", "бережи себе",
-        "успіхів вам", "успіхів",
     ]
     if any(m in all_text for m in farewell_markers):
         features["has_farewell"] = True
@@ -1666,10 +1747,6 @@ def extract_features_openai(dialogue, comment, kb_context="", replacements=None)
 
 
 def extract_features_claude(dialogue, comment, kb_context="", replacements=None):
-    if claude_client is None:
-        st.error("Claude API key не налаштований (ANTHROPIC_API_KEY).")
-        return {}
-
     base_prompt = get_full_analysis_prompt_claude(comment, kb_context)
     prompt = build_combined_analysis_prompt(base_prompt, dialogue, replacements or {})
 
@@ -1720,56 +1797,6 @@ def analyze_call_cached(ai_provider, url, call_date, dialogue, manager_comment, 
         kb_context,
         replacements,
     )
-
-
-def run_all_validators(features, dialogue, call, kb_data):
-    """
-    Єдина точка входу для всіх валідаторів.
-    Порядок виклику критичний — не змінювати.
-    """
-    # 1. Презентація — залежить від KB, незалежна від інших
-    features = normalize_presentation_level(features, dialogue, kb_data)
-
-    # 2. Бонус — незалежний від презентації
-    features = validate_bonus_features(features, dialogue)
-
-    # 3. Діалог — визначає is_limited_dialogue і client_driving
-    features = validate_dialogue_exceptions(features, dialogue)
-
-    # 4. Додумування — перевіряє репліки менеджера і клієнта
-    features = validate_assumption_made(features, dialogue)
-
-    # 5. Заперечення і утримання — залежить від client_wants_to_end
-    features = validate_objection_and_retention(features, dialogue)
-
-    # 6. Причина в картці — читає коментар менеджера
-    features = validate_card_reason(features, call["manager_comment"])
-
-    # 7. Картка — залежить від followup_type і card_has_reason
-    features = validate_card_features(features)
-
-    # 8. Час у картці — читає коментар менеджера, після validate_card_features
-    features = validate_card_followup_time(features, call["manager_comment"])
-
-    # 9. Домовленість — уточнює followup_type по тексту
-    features = validate_followup_type(features, dialogue)
-
-    # 10. Картку повторно — бо followup_type міг змінитись на кроці 9
-    features = validate_card_features(features)
-
-    # 11. Професіоналізм — перевіряє third party
-    features = validate_professionalism_features(features, dialogue)
-
-    # 12. Заборонені слова — незалежний
-    features = validate_forbidden_words(features, dialogue)
-
-    # 13. Дружнє питання — уточнює friendly_question
-    features = validate_friendly_question(features, dialogue)
-
-    # 14. Спеціальні стани клієнта — has_farewell, client_sick, military
-    features = validate_special_client_states(features, dialogue)
-
-    return features
 
 
 # ================= SCORING =================
@@ -2369,7 +2396,19 @@ if run_openai or run_claude:
 
             clean_dialogue = apply_replacements(transcript, replacements)
             features = analysis_result.get("features", {})
-            features = run_all_validators(features, clean_dialogue, call, kb_data)
+            features = normalize_presentation_level(features, clean_dialogue, kb_data)
+            features = validate_bonus_features(features, clean_dialogue)
+            features = validate_dialogue_exceptions(features, clean_dialogue)
+            features = validate_assumption_made(features, clean_dialogue)
+            features = validate_objection_and_retention(features, clean_dialogue)
+            features = validate_card_reason(features, call["manager_comment"])
+            features = validate_card_features(features)
+            features = validate_card_followup_time(features, call["manager_comment"])
+            features = validate_followup_type(features, clean_dialogue)
+            features = validate_professionalism_features(features, clean_dialogue)
+            features = validate_forbidden_words(features, clean_dialogue)
+            features = validate_friendly_question(features, clean_dialogue)
+            features = validate_special_client_states(features, clean_dialogue)
             if not features:
                 st.warning("Помилка аналізу")
                 continue
@@ -2475,7 +2514,9 @@ if run_openai or run_claude:
 
 # ================= OUTPUT =================
 for i, res in enumerate(st.session_state["results"]):
-    with st.expander(f"📞 Дзвінок {i+1}", expanded=(i == 0)):
+    if i >= len(result_slots):
+        break
+    with result_slots[i]:
         df = pd.DataFrame(
             list(res["scores"].items()),
             columns=["Критерій", "Оцінка"]
@@ -2487,7 +2528,7 @@ for i, res in enumerate(st.session_state["results"]):
         st.success(f"Загальний бал: {total:.1f}")
 
         st.markdown("### 💬 Коментар QA")
-        for line in res["comment"].split("\n"):     
+        for line in res["comment"].split("\n"):
             st.write(line)
 
 # ================= EXPORT =================
