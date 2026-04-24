@@ -938,10 +938,11 @@ def validate_friendly_question(features, dialogue):
 
     Дружнє питання має стосуватись особисто клієнта (справи, настрій, життя),
     а не сайту, гри чи наявних у клієнта питань по продукту.
-    """
-    if not features.get("friendly_question"):
-        return features
 
+    Додатково толерує ASR-спотворення: якщо Deepgram почув "яка ваша справа"
+    або "як ваші справ..." замість "як справи", зараховуємо дружнє питання,
+    коли поруч є інший маркер інтересу до стану клієнта ("все добре", "як ви").
+    """
     manager_lines, _ = extract_role_lines(dialogue)
     manager_text = " ".join(manager_lines).lower()
     if not manager_text:
@@ -958,9 +959,37 @@ def validate_friendly_question(features, dialogue):
         r"як\s+вихідн",
     ]
 
-    has_real_friendly = any(re.search(p, manager_text) for p in real_friendly_patterns)
+    # ASR-спотворені варіанти "як справи" (Deepgram іноді чує як "яка ваша справа",
+    # "як ваші справа", "як справ..." тощо). Не вважаємо дружнім самі по собі —
+    # потрібен підтверджуючий контекст (див. friendly_context_markers нижче).
+    asr_distorted_friendly_patterns = [
+        r"як[аиіеоя]?\s+(?:ваш[аиіеоя]?|тво[яєїі])\s+справ\w*(?!\s+(?:на\s+сайт|по\s+сайт|з\s+сайт))",
+        r"як\s+справ\w*(?!\s+(?:на\s+сайт|по\s+сайт|з\s+сайт))",
+        r"як\s+у\s+вас\s+справ\w*",
+        r"як\s+у\s+тебе\s+справ\w*",
+    ]
 
-    if not has_real_friendly:
+    # Контекстні маркери інтересу до стану клієнта, які підтверджують дружній
+    # намір, коли основна фраза спотворена ASR.
+    friendly_context_markers = [
+        "все добре",
+        "все гаразд",
+        "як ви",
+        "як почува",
+        "як себе почува",
+        "як настрій",
+        "як ваш день",
+    ]
+
+    has_real_friendly = any(re.search(p, manager_text) for p in real_friendly_patterns)
+    has_asr_distorted = any(re.search(p, manager_text) for p in asr_distorted_friendly_patterns)
+    has_context = any(marker in manager_text for marker in friendly_context_markers)
+
+    asr_friendly_detected = has_asr_distorted and has_context
+
+    if has_real_friendly or asr_friendly_detected:
+        features["friendly_question"] = True
+    elif features.get("friendly_question"):
         features["friendly_question"] = False
 
     return features
@@ -971,6 +1000,45 @@ def validate_assumption_made(features, dialogue):
     manager_text = " ".join(manager_lines).lower()
     client_text = " ".join(client_lines).lower()
     if not manager_text:
+        features["assumption_made"] = False
+        features["assumption_soft"] = False
+        return features
+
+    # Особливе правило: клієнт сам повідомляє про хворобу / поганий стан, а
+    # менеджер реагує підтримкою або побажанням одужання — це не додумування.
+    sick_markers = [
+        "хворію",
+        "хворий",
+        "хвора",
+        "температура",
+        "температурою",
+        "захворів",
+        "захворіла",
+        "застудився",
+        "застудилась",
+        "застудилася",
+        "нездужаю",
+        "не здужаю",
+        "погано себе почуваю",
+        "погано почуваюся",
+        "погано почуваюсь",
+        "погано себе почуваюсь",
+    ]
+    recovery_markers = [
+        "одужуйте",
+        "одужуй",
+        "поправляйтесь",
+        "поправляйся",
+        "швидкого одужання",
+        "одужання",
+        "не хворійте",
+        "не болійте",
+        "видужуйте",
+        "видужуй",
+    ]
+    client_reported_sick = any(marker in client_text for marker in sick_markers)
+    manager_wished_recovery = any(marker in manager_text for marker in recovery_markers)
+    if client_reported_sick and manager_wished_recovery:
         features["assumption_made"] = False
         features["assumption_soft"] = False
         return features
@@ -1033,8 +1101,45 @@ def validate_assumption_made(features, dialogue):
         "збираюся",
     ]
 
-    has_hard = any(marker in manager_text for marker in hard_assumption_markers)
-    has_soft = any(marker in manager_text for marker in soft_assumption_markers)
+    # Permission-check питання — це перевірка доступності, а не додумування.
+    # Вони можуть перетинатися зі списком assumption-маркерів (напр. "ви зайняті"
+    # чи "чи зручно говорити"), тому вирізаємо їх із тексту перед перевіркою
+    # assumption-маркерів: якщо після видалення нічого assumption-подібного
+    # не лишається — це чиста permission check і не ставимо assumption_made.
+    permission_check_markers = [
+        "ви зайняті?",
+        "ви зайнят?",
+        "ви зайнята?",
+        "ви зайнятий?",
+        "ви зайняті зараз",
+        "ви зайняті",
+        "зручно говорити",
+        "чи зручно говорити",
+        "чи зручно вам говорити",
+        "зручно вам говорити",
+        "зручно вам зараз",
+        "зручно зараз",
+        "зараз зручно",
+        "чи зручно",
+        "можу коротко",
+        "можна коротко",
+        "коротко можна",
+        "маєте хвилинку",
+        "є хвилинка",
+        "є пара хвилин",
+        "маєте пару хвилин",
+        "чи маєте хвилинку",
+        "чи маєте час",
+        "маєте час",
+        "ви вільні",
+    ]
+
+    manager_text_no_permissions = manager_text
+    for pc in permission_check_markers:
+        manager_text_no_permissions = manager_text_no_permissions.replace(pc, " ")
+
+    has_hard = any(marker in manager_text_no_permissions for marker in hard_assumption_markers)
+    has_soft = any(marker in manager_text_no_permissions for marker in soft_assumption_markers)
 
     # Якщо клієнт уже сигналізував про стан — менеджер реагує, а не додумує
     client_already_signaled = any(marker in client_text for marker in client_state_markers)
