@@ -934,14 +934,17 @@ def validate_forbidden_words(features, dialogue):
 
 
 def validate_friendly_question(features, dialogue):
-    """Виключає питання про сайт/продукт як хибні дружні питання.
+    """Валідатор + recovery override для дружнього питання.
 
     Дружнє питання має стосуватись особисто клієнта (справи, настрій, життя),
     а не сайту, гри чи наявних у клієнта питань по продукту.
 
-    Додатково толерує ASR-спотворення: якщо Deepgram почув "яка ваша справа"
-    або "як ваші справ..." замість "як справи", зараховуємо дружнє питання,
-    коли поруч є інший маркер інтересу до стану клієнта ("все добре", "як ви").
+    Працює у двох напрямках:
+    1) Обмеження false positives — якщо LLM поставив True, але жодного
+       надійного патерна немає, опускає до False.
+    2) Recovery override для false negatives — якщо LLM поставив False, але в
+       менеджерських репліках є чіткий дружній патерн (або ASR-спотворена
+       форма + підтверджуючий контекст), примусово ставить True.
     """
     manager_lines, _ = extract_role_lines(dialogue)
     manager_text = " ".join(manager_lines).lower()
@@ -959,18 +962,30 @@ def validate_friendly_question(features, dialogue):
         r"як\s+вихідн",
     ]
 
-    # ASR-спотворені варіанти "як справи" (Deepgram іноді чує як "яка ваша справа",
-    # "як ваші справа", "як справ..." тощо). Не вважаємо дружнім самі по собі —
-    # потрібен підтверджуючий контекст (див. friendly_context_markers нижче).
+    # Strong standalone-патерни — достатньо самі по собі для promotion, навіть
+    # якщо LLM поставив friendly_question = False. Включають fuzzy-форми, які
+    # LLM часто не розпізнає як "дружнє питання" через ASR-спотворення.
+    strong_standalone_friendly_patterns = [
+        # Загальний "як [ваші/твої] справ..." — будь-яка форма "справи/справа"
+        r"\bяк\s+(?:ваш[аиіеоя]|тво[яєїі])?\s*справ\w*\b(?!\s+(?:на\s+сайт|по\s+сайт|з\s+сайт))",
+        # Спеціальний fuzzy pattern для очевидного ASR misrecognition "як ваші справи":
+        # Deepgram часто чує це як "яка ваша справа" / "які ваші справа" / "яке ваша справа"
+        r"\bяк[аиіеоя]\s+(?:ваш[аиіеоя]|тво[яєїі])\s+справ\w*\b(?!\s+(?:на\s+сайт|по\s+сайт|з\s+сайт))",
+        # "все добре?" / "все гаразд?" як питання про особистий стан
+        # (виключаємо варіанти про сайт/гру/продукт)
+        r"\bвсе\s+добре\b(?!\s+(?:по\s+сайт|на\s+сайт|з\s+сайт|з\s+грою|по\s+гр|з\s+гр|на\s+сайті|по\s+сайту))",
+        r"\bвсе\s+гаразд\b(?!\s+(?:по\s+сайт|на\s+сайт|з\s+сайт|з\s+грою|на\s+сайті|по\s+сайту))",
+    ]
+
+    # Слабкі ASR-патерни — потребують підтверджуючого контексту, щоб уникнути
+    # хибних спрацювань (напр. "як у вас там" без справ контексту).
     asr_distorted_friendly_patterns = [
-        r"як[аиіеоя]?\s+(?:ваш[аиіеоя]?|тво[яєїі])\s+справ\w*(?!\s+(?:на\s+сайт|по\s+сайт|з\s+сайт))",
-        r"як\s+справ\w*(?!\s+(?:на\s+сайт|по\s+сайт|з\s+сайт))",
         r"як\s+у\s+вас\s+справ\w*",
         r"як\s+у\s+тебе\s+справ\w*",
     ]
 
-    # Контекстні маркери інтересу до стану клієнта, які підтверджують дружній
-    # намір, коли основна фраза спотворена ASR.
+    # Контекстні маркери інтересу до стану клієнта, які підтверджують слабкі
+    # ASR-патерни вище.
     friendly_context_markers = [
         "все добре",
         "все гаразд",
@@ -982,12 +997,18 @@ def validate_friendly_question(features, dialogue):
     ]
 
     has_real_friendly = any(re.search(p, manager_text) for p in real_friendly_patterns)
+    has_strong_standalone = any(
+        re.search(p, manager_text) for p in strong_standalone_friendly_patterns
+    )
     has_asr_distorted = any(re.search(p, manager_text) for p in asr_distorted_friendly_patterns)
     has_context = any(marker in manager_text for marker in friendly_context_markers)
 
     asr_friendly_detected = has_asr_distorted and has_context
 
-    if has_real_friendly or asr_friendly_detected:
+    # Recovery override + обмеження false positives одним рішенням:
+    # будь-який надійний патерн (реальний, strong standalone, або ASR+контекст)
+    # форсує True — навіть якщо LLM поставив False.
+    if has_real_friendly or has_strong_standalone or asr_friendly_detected:
         features["friendly_question"] = True
     elif features.get("friendly_question"):
         features["friendly_question"] = False
