@@ -18,8 +18,6 @@ from openai import OpenAI
 from prompts import get_full_analysis_prompt_claude, get_full_analysis_prompt_openai
 import anthropic
 
-st.set_page_config(page_title="ALFA TEST", layout="wide")
-
 # ================= CONFIG =================
 def read_secret(name, default=None):
     value = st.secrets.get(name)
@@ -66,7 +64,7 @@ CLAUDE_MAX_OUTPUT_TOKENS = int(st.secrets.get("CLAUDE_MAX_OUTPUT_TOKENS", 2200))
 # ================= HEADER =================
 st.markdown("""
 <div class="card">
-    <h2 style="margin:0;">🎧 ALFA TEST</h2>
+    <h2 style="margin:0;">🎧 QA-10</h2>
     <span style="color:#aaa;">Аналіз дзвінків</span>
 </div>
 """, unsafe_allow_html=True)
@@ -162,15 +160,11 @@ if not managers_config:
     )
 
 # ================= INPUT =================
-if "results" not in st.session_state or not isinstance(st.session_state["results"], dict):
-    st.session_state["results"] = {}
-
 calls = []
-call_columns = st.columns(5)
-
-for idx, col in enumerate(call_columns, start=1):
-    with col:
-        with st.expander(f"📞 Дзвінок {idx}", expanded=True):
+for row in range(5):
+    col1, col2 = st.columns(2)
+    for col, idx in zip([col1, col2], [row * 2 + 1, row * 2 + 2]):
+        with col.expander(f"📞 Дзвінок {idx}"):
             audio_url = st.text_input("Посилання", key=f"url_{idx}")
             qa_manager = st.selectbox("QA", qa_managers_list, key=f"qa_{idx}")
             selected_project = st.selectbox(
@@ -205,49 +199,35 @@ for idx, col in enumerate(call_columns, start=1):
                 ["правильно нараховано", "помилково нараховано", "не потрібно"],
                 key=f"bonus_{idx}"
             )
-            repeat_call = st.selectbox(
-                "Передзвон",
-                ["так, був протягом години", "так, був протягом 2 годин", "ні, не було"],
-                key=f"repeat_{idx}"
-            )
-            call_completion_status = st.selectbox(
-                "Завершення виклику",
-                call_completion_statuses,
-                key=f"call_completion_{idx}"
-            )
+            repeat_col, completion_col = st.columns(2)
+            with repeat_col:
+                repeat_call = st.selectbox(
+                    "Передзвон",
+                    ["так, був протягом години", "так, був протягом 2 годин", "ні, не було"],
+                    key=f"repeat_{idx}"
+                )
+            with completion_col:
+                call_completion_status = st.selectbox(
+                    "Завершення виклику",
+                    call_completion_statuses,
+                    key=f"call_completion_{idx}"
+                )
             manager_comment = st.text_area("Коментар", key=f"comment_{idx}")
 
-        calls.append({
-            "url": audio_url.strip(),
-            "qa_manager": qa_manager,
-            "project": selected_project or "",
-            "ret_manager": selected_manager or "",
-            "ret_sheet_id": selected_manager_data["sheet_id"] if selected_manager_data else "",
-            "client_id": client_id,
-            "call_date": call_date,
-            "check_date": check_date.strftime("%d-%m-%Y"),
-            "bonus_check": bonus_check,
-            "repeat_call": repeat_call,
-            "call_completion_status": call_completion_status,
-            "manager_comment": manager_comment,
-        })
-
-        result = st.session_state["results"].get(idx - 1)
-        if result:
-            st.markdown(f"#### 📊 Аналіз дзвінка {idx}")
-            df = pd.DataFrame(
-                list(result["scores"].items()),
-                columns=["Критерій", "Оцінка"]
-            )
-            df["Оцінка"] = df["Оцінка"].apply(lambda x: f"{float(x):.1f}")
-            st.table(df)
-
-            total = sum(result["scores"].values())
-            st.success(f"Загальний бал: {total:.1f}")
-
-            st.markdown("##### 💬 Коментар QA")
-            for line in result["comment"].split("\n"):
-                st.write(line)
+            calls.append({
+                "url": audio_url.strip(),
+                "qa_manager": qa_manager,
+                "project": selected_project or "",
+                "ret_manager": selected_manager or "",
+                "ret_sheet_id": selected_manager_data["sheet_id"] if selected_manager_data else "",
+                "client_id": client_id,
+                "call_date": call_date,
+                "check_date": check_date.strftime("%d-%m-%Y"),
+                "bonus_check": bonus_check,
+                "repeat_call": repeat_call,
+                "call_completion_status": call_completion_status,
+                "manager_comment": manager_comment,
+            })
 
 # ================= TRANSCRIPTION =================
 def post_process_transcript(text: str) -> str:
@@ -448,16 +428,7 @@ def clean_transcript_cached(raw_transcript, cache_version):
                         "2. Перейменуй спікерів: ch_0 → Менеджер, ch_1 → Клієнт\n"
                         "3. Збережи формат діалогу: кожна репліка з нового рядка у форматі 'Спікер: текст'\n"
                         "4. Не додавай, не прибирай і не перефразовуй репліки — тільки виправляй помилки\n"
-                        "5. Поверни тільки виправлений транскрипт без коментарів\n"
-                        "6. Якщо одна думка менеджера або клієнта розбита на декілька коротких рядків — склей їх в одну репліку. "
-                        "Наприклад: 'Менеджер: мене\\nМенеджер: звати\\nМенеджер: Ольга' → 'Менеджер: мене звати Ольга'\n"
-                        "7. Числа пиши цифрами, не словами: 'двісті п'ятдесят' → '250', 'сорок вісім годин' → '48 годин', 'п'ятнадцята' → '15:00'\n"
-                        "8. Порядкові числівники теж цифрами: 'о п'ятій' → 'о 17:00' або 'о 5-й', 'після шостої' → 'після 18:00' або 'після 6-ї'\n"
-                        "9. Назви проєктів — тільки ці три варіанти: '777', 'Betking', 'Vegas'. "
-                        "Якщо чуєш схоже — виправляй: '777-сім', '777 сім', 'три сімки' → '777'; "
-                        "'беткінг', 'бетінг', 'веткінг' → 'Betking'; "
-                        "'вейджер', 'вегас', 'веджас' → 'Vegas'\n"
-                        "10. Імена менеджерів беруться з контексту розмови — якщо менеджер назвав своє ім'я, зберігай його точно"
+                        "5. Поверни тільки виправлений транскрипт без коментарів"
                     )
                 },
                 {
@@ -857,20 +828,6 @@ def validate_assumption_made(features, dialogue):
         "не можу говорити",
         "я за кермом",
         "передзвоніть",
-        "у ванні",
-        "у душі",
-        "не маю часу",
-        "нема часу",
-        "не можу зараз",
-        "зараз не можу",
-        "зайнята",
-        "зайнятий",
-        "не до",
-        "їхати",
-        "виходжу",
-        "на виході",
-        "збираюсь",
-        "збираюся",
     ]
 
     has_hard = any(marker in manager_text for marker in hard_assumption_markers)
@@ -1153,27 +1110,19 @@ def validate_card_followup_time(features, manager_comment):
         features["card_has_followup_time"] = True
         return features
 
-    if re.search(r"після\s+\d{1,2}", comment):
-        features["card_has_followup_time"] = True
-        return features
-
     time_markers = [
         "завтра",
-        "після обіду",
-        "після роботи",
-        "після шостої",
-        "після п'ятої",
-        "після четвертої",
+        "після",
         "перезвон",
-        "передзвон",
+        "передз",
         "через годину",
         "через дві",
         "ввечері",
         "вранці",
         "вдень",
-        "наберу о",
-        "передзвоню о",
-        "зателефоную о",
+        "пізніше",
+        "наберу",
+        "передзвоню",
     ]
     if any(marker in comment for marker in time_markers):
         features["card_has_followup_time"] = True
@@ -1261,9 +1210,6 @@ def validate_followup_type(features, dialogue):
         r"\bближче\s+до?\s*\d{1,2}\b",
         r"\bближче\s+\d{1,2}\b",
         r"\bдо\s+\d{1,2}\b",
-        r"\bз\s+\d{1,2}\s+до\s+\d{1,2}\b",
-        r"\bміж\s+\d{1,2}\s+і\s+\d{1,2}\b",
-        r"\bвід\s+\d{1,2}\s+до\s+\d{1,2}\b",
         r"через\s+\d+\s*(хвилин|годин)",
         r"через\s+пів\s*години",
         r"через\s+півгодини",
@@ -1470,8 +1416,10 @@ def validate_objection_and_retention(features, dialogue):
             if features.get("continuation_level") not in {"strong", "weak"}:
                 features["continuation_level"] = "weak"
         elif callback_only or bonus_only:
-            # callback_only/bonus_only завжди знижує до "formal" незалежно від рішення LLM
-            features["continuation_level"] = "formal"
+            if features.get("continuation_level") == "strong":
+                features["continuation_level"] = "formal"
+            elif features.get("continuation_level") == "none":
+                features["continuation_level"] = "formal"
 
     if features.get("continuation_level") == "strong":
         strong_count = 0
@@ -1895,12 +1843,7 @@ def score_call(f, meta, dialogue=None):
 
     # ---------------- Спроба презентації ----------------
     # Бінарна шкала: 0 або 5. partial і full дають однаковий максимум.
-    # Презентація визначається тільки кодом через KB (normalize_presentation_level
-    # у run_all_validators). Додатковий захист: LLM міг повернути "partial"/"full"
-    # в обхід validator'а (наприклад якщо KB порожній або функція не спрацювала).
     level = f.get("presentation_level", "none")
-    if level not in {"full", "partial"}:
-        level = "none"
 
     # limited_dialogue автоматично не зараховує презентацію, якщо менеджер явно
     # говорив про бонус (бонус ≠ презентація). Якщо менеджер у такій розмові
@@ -2371,6 +2314,9 @@ def apply_call_completion_rules(scores, features, meta):
     return scores
 
 # ================= RUN =================
+if "results" not in st.session_state:
+    st.session_state["results"] = []
+
 col1, col2 = st.columns(2)
 run_openai = col1.button("🚀 OpenAI", type="primary")
 run_claude = col2.button("🧠 Claude")
@@ -2433,10 +2379,10 @@ if run_openai or run_claude:
             comment_for_sheet = format_comment_for_sheet(comment)
             ai_label = "OpenAI" if run_openai else "Claude"
 
-            st.session_state["results"][i] = {
+            st.session_state["results"].append({
                 "scores": scores,
                 "comment": comment
-            }
+            })
 
             if google_client:
                 if not call["ret_sheet_id"]:
@@ -2527,14 +2473,28 @@ if run_openai or run_claude:
                 except Exception as e:
                     st.error(f"Google error [LOG_INFO]: {e}")
 
-    st.rerun()
+# ================= OUTPUT =================
+for i, res in enumerate(st.session_state["results"]):
+    with st.expander(f"📞 Дзвінок {i+1}", expanded=(i == 0)):
+        df = pd.DataFrame(
+            list(res["scores"].items()),
+            columns=["Критерій", "Оцінка"]
+        )
+        df["Оцінка"] = df["Оцінка"].apply(lambda x: f"{float(x):.1f}")
+        st.table(df)
+
+        total = sum(res["scores"].values())
+        st.success(f"Загальний бал: {total:.1f}")
+
+        st.markdown("### 💬 Коментар QA")
+        for line in res["comment"].split("\n"):     
+            st.write(line)
 
 # ================= EXPORT =================
 if st.session_state["results"]:
     xls = BytesIO()
     with pd.ExcelWriter(xls, engine="openpyxl") as writer:
-        for i in sorted(st.session_state["results"].keys()):
-            res = st.session_state["results"][i]
+        for i, res in enumerate(st.session_state["results"]):
             df = pd.DataFrame(res["scores"].items(), columns=["Критерій", "Оцінка"])
             df.to_excel(writer, sheet_name=f"Call_{i+1}", index=False)
     xls.seek(0)
