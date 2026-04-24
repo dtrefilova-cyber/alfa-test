@@ -162,7 +162,7 @@ if not managers_config:
     )
 
 # ================= INPUT =================
-if "results" not in st.session_state:
+if "results" not in st.session_state or not isinstance(st.session_state["results"], dict):
     st.session_state["results"] = {}
 
 calls = []
@@ -448,7 +448,16 @@ def clean_transcript_cached(raw_transcript, cache_version):
                         "2. Перейменуй спікерів: ch_0 → Менеджер, ch_1 → Клієнт\n"
                         "3. Збережи формат діалогу: кожна репліка з нового рядка у форматі 'Спікер: текст'\n"
                         "4. Не додавай, не прибирай і не перефразовуй репліки — тільки виправляй помилки\n"
-                        "5. Поверни тільки виправлений транскрипт без коментарів"
+                        "5. Поверни тільки виправлений транскрипт без коментарів\n"
+                        "6. Якщо одна думка менеджера або клієнта розбита на декілька коротких рядків — склей їх в одну репліку. "
+                        "Наприклад: 'Менеджер: мене\\nМенеджер: звати\\nМенеджер: Ольга' → 'Менеджер: мене звати Ольга'\n"
+                        "7. Числа пиши цифрами, не словами: 'двісті п'ятдесят' → '250', 'сорок вісім годин' → '48 годин', 'п'ятнадцята' → '15:00'\n"
+                        "8. Порядкові числівники теж цифрами: 'о п'ятій' → 'о 17:00' або 'о 5-й', 'після шостої' → 'після 18:00' або 'після 6-ї'\n"
+                        "9. Назви проєктів — тільки ці три варіанти: '777', 'Betking', 'Vegas'. "
+                        "Якщо чуєш схоже — виправляй: '777-сім', '777 сім', 'три сімки' → '777'; "
+                        "'беткінг', 'бетінг', 'веткінг' → 'Betking'; "
+                        "'вейджер', 'вегас', 'веджас' → 'Vegas'\n"
+                        "10. Імена менеджерів беруться з контексту розмови — якщо менеджер назвав своє ім'я, зберігай його точно"
                     )
                 },
                 {
@@ -848,6 +857,20 @@ def validate_assumption_made(features, dialogue):
         "не можу говорити",
         "я за кермом",
         "передзвоніть",
+        "у ванні",
+        "у душі",
+        "не маю часу",
+        "нема часу",
+        "не можу зараз",
+        "зараз не можу",
+        "зайнята",
+        "зайнятий",
+        "не до",
+        "їхати",
+        "виходжу",
+        "на виході",
+        "збираюсь",
+        "збираюся",
     ]
 
     has_hard = any(marker in manager_text for marker in hard_assumption_markers)
@@ -1130,19 +1153,27 @@ def validate_card_followup_time(features, manager_comment):
         features["card_has_followup_time"] = True
         return features
 
+    if re.search(r"після\s+\d{1,2}", comment):
+        features["card_has_followup_time"] = True
+        return features
+
     time_markers = [
         "завтра",
-        "після",
+        "після обіду",
+        "після роботи",
+        "після шостої",
+        "після п'ятої",
+        "після четвертої",
         "перезвон",
-        "передз",
+        "передзвон",
         "через годину",
         "через дві",
         "ввечері",
         "вранці",
         "вдень",
-        "пізніше",
-        "наберу",
-        "передзвоню",
+        "наберу о",
+        "передзвоню о",
+        "зателефоную о",
     ]
     if any(marker in comment for marker in time_markers):
         features["card_has_followup_time"] = True
@@ -1230,6 +1261,9 @@ def validate_followup_type(features, dialogue):
         r"\bближче\s+до?\s*\d{1,2}\b",
         r"\bближче\s+\d{1,2}\b",
         r"\bдо\s+\d{1,2}\b",
+        r"\bз\s+\d{1,2}\s+до\s+\d{1,2}\b",
+        r"\bміж\s+\d{1,2}\s+і\s+\d{1,2}\b",
+        r"\bвід\s+\d{1,2}\s+до\s+\d{1,2}\b",
         r"через\s+\d+\s*(хвилин|годин)",
         r"через\s+пів\s*години",
         r"через\s+півгодини",
@@ -1436,10 +1470,8 @@ def validate_objection_and_retention(features, dialogue):
             if features.get("continuation_level") not in {"strong", "weak"}:
                 features["continuation_level"] = "weak"
         elif callback_only or bonus_only:
-            if features.get("continuation_level") == "strong":
-                features["continuation_level"] = "formal"
-            elif features.get("continuation_level") == "none":
-                features["continuation_level"] = "formal"
+            # callback_only/bonus_only завжди знижує до "formal" незалежно від рішення LLM
+            features["continuation_level"] = "formal"
 
     if features.get("continuation_level") == "strong":
         strong_count = 0
@@ -1863,7 +1895,12 @@ def score_call(f, meta, dialogue=None):
 
     # ---------------- Спроба презентації ----------------
     # Бінарна шкала: 0 або 5. partial і full дають однаковий максимум.
+    # Презентація визначається тільки кодом через KB (normalize_presentation_level
+    # у run_all_validators). Додатковий захист: LLM міг повернути "partial"/"full"
+    # в обхід validator'а (наприклад якщо KB порожній або функція не спрацювала).
     level = f.get("presentation_level", "none")
+    if level not in {"full", "partial"}:
+        level = "none"
 
     # limited_dialogue автоматично не зараховує презентацію, якщо менеджер явно
     # говорив про бонус (бонус ≠ презентація). Якщо менеджер у такій розмові
