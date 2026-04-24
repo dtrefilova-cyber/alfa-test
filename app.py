@@ -250,48 +250,151 @@ for idx, col in enumerate(call_columns, start=1):
                 st.write(line)
 
 # ================= TRANSCRIPTION =================
+INCOMPLETE_TAIL_TOKENS = {
+    "від", "для", "про", "на", "до", "з", "зі", "у", "в",
+    "по", "за", "без", "над", "під", "між", "через", "серед", "біля",
+    "і", "та", "й", "або", "чи", "але", "бо", "що", "щоб", "аби",
+    "якщо", "коли", "тому", "проте", "однак",
+}
+
+CLIENT_BACKCHANNEL_TOKENS = {
+    "так", "угу", "ага", "добре", "дякую", "да", "ок", "окей",
+    "зрозумів", "зрозуміла", "зрозуміло", "ясно", "аха", "еге",
+    "м", "мм", "ммм", "хм", "ага-ага",
+}
+
+GARBAGE_TOKENS = {
+    "шокамінь", "шокамень",
+    "бездезрозум", "бездезрозуміло",
+}
+
+
+def _clean_token(token: str) -> str:
+    return token.strip(".,!?:;—–-()[]«»\"'`").lower()
+
+
+def _last_token(content: str) -> str:
+    words = content.split()
+    for word in reversed(words):
+        cleaned = _clean_token(word)
+        if cleaned:
+            return cleaned
+    return ""
+
+
+def _ends_with_incomplete_tail(content: str) -> bool:
+    return _last_token(content) in INCOMPLETE_TAIL_TOKENS
+
+
+def _is_client_backchannel(content: str, max_words: int = 3) -> bool:
+    words = [_clean_token(w) for w in content.split()]
+    words = [w for w in words if w]
+    if not words or len(words) > max_words:
+        return False
+    return all(w in CLIENT_BACKCHANNEL_TOKENS for w in words)
+
+
+def _strip_garbage_tokens(content: str) -> str:
+    kept = []
+    for word in content.split():
+        if _clean_token(word) in GARBAGE_TOKENS:
+            continue
+        kept.append(word)
+    return " ".join(kept)
+
+
+def _parse_line(line: str):
+    """Розбирає рядок діалогу на (speaker, content). speaker='' якщо формат не 'X: Y'."""
+    stripped = line.strip()
+    if not stripped:
+        return None
+    if ":" not in stripped:
+        return ("", stripped)
+    speaker, content = stripped.split(":", 1)
+    speaker = speaker.strip()
+    content = content.strip()
+    if not content:
+        return None
+    return (speaker, content)
+
+
+def _format_line(speaker: str, content: str) -> str:
+    return f"{speaker}: {content}" if speaker else content
+
+
 def merge_short_fragments(text: str, max_fragment_words: int = 4) -> str:
-    """Pre-cleaning: склеює короткі послідовні репліки одного спікера в одну.
+    """Pre-cleaning: склеює штучно розбиті Deepgram-репліки в логічні думки.
 
     Deepgram часто ріже одну думку менеджера/клієнта на 2-4 короткі фрагменти
-    (1–4 слова кожен). Таке дроблення заважає і GPT-cleanup, і аналізу.
+    або перериває її коротким ack клієнта. Склеюємо такі уламки локально,
+    до GPT-cleanup, щоб і cleanup, і аналіз працювали зі зв'язними репліками.
 
-    Правило: якщо поспіль йдуть репліки одного й того самого спікера і
-    попередня репліка коротка (<= max_fragment_words слів) — склеюємо її
-    з наступною. Склеювання продовжується ланцюжком.
+    Кроки:
+    1. Прибираємо беззмістовні ASR-токени (GARBAGE_TOKENS).
+    2. Склеюємо послідовні короткі (<= max_fragment_words слів) репліки одного спікера,
+       а також коли попередня репліка закінчується незавершеною конструкцією
+       (прийменник/сполучник на кшталт "від", "для", "що", "і", "та" тощо).
+    3. Якщо менеджерська фраза незавершена, клієнт відреагував коротким backchannel
+       ("так", "угу", "ага", "добре", "дякую"), і менеджер продовжує ту саму думку —
+       склеюємо дві менеджерські репліки в одну, зберігаючи репліку клієнта окремим рядком.
 
-    Зміст не змінюємо — лише прибираємо штучні розриви.
+    Зміст не змінюємо — лише прибираємо штучні розриви та очевидне ASR-сміття.
     """
     if not text:
         return text
 
-    merged = []
+    parsed = []
     for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line or ":" not in line:
-            if line:
-                merged.append(line)
+        item = _parse_line(raw_line)
+        if item is None:
             continue
+        speaker, content = item
+        if speaker:
+            content = _strip_garbage_tokens(content)
+            if not content:
+                continue
+        parsed.append((speaker, content))
 
-        speaker, content = line.split(":", 1)
-        speaker = speaker.strip()
-        content = content.strip()
-        if not content:
-            continue
-
-        if merged and ":" in merged[-1]:
-            prev_speaker, prev_content = merged[-1].split(":", 1)
-            prev_speaker = prev_speaker.strip()
-            prev_content = prev_content.strip()
+    merged_same_speaker = []
+    for speaker, content in parsed:
+        if merged_same_speaker and speaker:
+            prev_speaker, prev_content = merged_same_speaker[-1]
             if prev_speaker == speaker:
                 prev_word_count = len(prev_content.split())
-                if prev_word_count <= max_fragment_words:
-                    merged[-1] = f"{speaker}: {prev_content} {content}".strip()
+                if (
+                    prev_word_count <= max_fragment_words
+                    or _ends_with_incomplete_tail(prev_content)
+                ):
+                    merged_same_speaker[-1] = (
+                        speaker,
+                        f"{prev_content} {content}".strip(),
+                    )
                     continue
+        merged_same_speaker.append((speaker, content))
 
-        merged.append(f"{speaker}: {content}")
+    result = []
+    i = 0
+    while i < len(merged_same_speaker):
+        if i + 2 < len(merged_same_speaker):
+            sp0, ct0 = merged_same_speaker[i]
+            sp1, ct1 = merged_same_speaker[i + 1]
+            sp2, ct2 = merged_same_speaker[i + 2]
+            if (
+                sp0
+                and sp0 == sp2
+                and sp1
+                and sp1 != sp0
+                and _ends_with_incomplete_tail(ct0)
+                and _is_client_backchannel(ct1)
+            ):
+                result.append((sp0, f"{ct0} {ct2}".strip()))
+                result.append((sp1, ct1))
+                i += 3
+                continue
+        result.append(merged_same_speaker[i])
+        i += 1
 
-    return "\n".join(merged)
+    return "\n".join(_format_line(sp, ct) for sp, ct in result)
 
 
 def post_process_transcript(text: str) -> str:
@@ -509,7 +612,12 @@ def clean_transcript_cached(raw_transcript, cache_version):
                         "13. Видаляй беззмістовні ASR-артефакти: одиночні склади/літери, що не утворюють слів ('ммм', 'еее', 'шш', обірвані буквосполучення "
                         "без змісту типу 'кр', 'пр', 'зв') — якщо вони стоять окремо і не є частиною слова\n"
                         "14. Склеюй обірвані фрази в одну завершену репліку, якщо за змістом видно, що це одна думка одного спікера, навіть якщо "
-                        "між ними була пауза"
+                        "між ними була пауза\n"
+                        "15. Виправляй контекстно абсурдні слова: якщо слово граматично існує, але за контекстом очевидно інше — "
+                        "заміняй на контекстно коректну форму. "
+                        "Приклади: 'телефонуй' (наказова) у репліці менеджера 'я телефонуй з приводу бонусу' → 'я телефоную з приводу бонусу'; "
+                        "'лімітований бонус' у контексті 'діє 48 годин' часто означає 'лімітований у часі бонус' або '48-годинний бонус' — "
+                        "обирай контекстно коректний варіант. Не заміняй, якщо контекст неоднозначний"
                     )
                 },
                 {
