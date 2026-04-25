@@ -598,22 +598,23 @@ def clean_transcript_cached(raw_transcript, cache_version):
                         "5. Поверни тільки виправлений транскрипт без коментарів\n"
                         "6. Якщо одна думка менеджера або клієнта розбита на декілька коротких рядків — склей їх в одну репліку. "
                         "Наприклад: 'Менеджер: мене\\nМенеджер: звати\\nМенеджер: Ольга' → 'Менеджер: мене звати Ольга'\n"
-                        "7. Числа пиши цифрами, не словами: 'двісті п'ятдесят' → '250', 'сорок вісім годин' → '48 годин', 'п'ятнадцята' → '15:00'\n"
-                        "8. Порядкові числівники теж цифрами: 'о п'ятій' → 'о 17:00' або 'о 5-й', 'після шостої' → 'після 18:00' або 'після 6-ї'\n"
+                        "7. Числа пиши цифрами: 'двісті п'ятдесят' → '250', 'сорок вісім годин' → '48 годин'\n"
+                        "8. Часові вирази: 'о п'ятій' → 'о 17:00', 'після шостої' → 'після 18:00', 'з дванадцяти до тринадцяти' → 'з 12:00 до 13:00'\n"
                         "9. Назви проєктів — тільки ці три варіанти: '777', 'Betking', 'Vegas'. "
                         "Якщо чуєш схоже — виправляй: '777-сім', '777 сім', 'три сімки' → '777'; "
-                        "'беткінг', 'бетінг', 'веткінг' → 'Betking'; "
-                        "'вейджер', 'вегас', 'веджас' → 'Vegas'\n"
-                        "10. Імена менеджерів беруться з контексту розмови — якщо менеджер назвав своє ім'я, зберігай його точно\n"
-                        "11. Виправляй фонетичні помилки ASR: слова, що звучать близько до розпізнаного, але за змістом фрази очевидно інші "
+                        "'беткінг', 'бетінг', 'веткінг', 'бетківг' → 'Betking'; "
+                        "'вейджер', 'вегас', 'веджас', 'Zegas', 'Vegy' → 'Vegas'\n"
+                        "10. Репліки коротше 3 слів ('так', 'а', 'угу', 'о') — приєднуй до попередньої репліки того ж спікера якщо вона є\n"
+                        "11. Імена менеджерів беруться з контексту розмови — якщо менеджер назвав своє ім'я, зберігай його точно\n"
+                        "12. Виправляй фонетичні помилки ASR: слова, що звучать близько до розпізнаного, але за змістом фрази очевидно інші "
                         "('бонас' → 'бонус', 'деп ступ' → 'депозит', 'фрі спин' → 'фріспін')\n"
-                        "12. Реконструюй спотворені слова по контексту: якщо слово виглядає як ASR-сміття, але сусідні слова дають однозначне значення — "
+                        "13. Реконструюй спотворені слова по контексту: якщо слово виглядає як ASR-сміття, але сусідні слова дають однозначне значення — "
                         "відновлюй правильну форму (не вгадуй, якщо контекст неоднозначний)\n"
-                        "13. Видаляй беззмістовні ASR-артефакти: одиночні склади/літери, що не утворюють слів ('ммм', 'еее', 'шш', обірвані буквосполучення "
+                        "14. Видаляй беззмістовні ASR-артефакти: одиночні склади/літери, що не утворюють слів ('ммм', 'еее', 'шш', обірвані буквосполучення "
                         "без змісту типу 'кр', 'пр', 'зв') — якщо вони стоять окремо і не є частиною слова\n"
-                        "14. Склеюй обірвані фрази в одну завершену репліку, якщо за змістом видно, що це одна думка одного спікера, навіть якщо "
+                        "15. Склеюй обірвані фрази в одну завершену репліку, якщо за змістом видно, що це одна думка одного спікера, навіть якщо "
                         "між ними була пауза\n"
-                        "15. Виправляй контекстно абсурдні слова: якщо слово граматично існує, але за контекстом очевидно інше — "
+                        "16. Виправляй контекстно абсурдні слова: якщо слово граматично існує, але за контекстом очевидно інше — "
                         "заміняй на контекстно коректну форму. "
                         "Приклади: 'телефонуй' (наказова) у репліці менеджера 'я телефонуй з приводу бонусу' → 'я телефоную з приводу бонусу'; "
                         "'лімітований бонус' у контексті 'діє 48 годин' часто означає 'лімітований у часі бонус' або '48-годинний бонус' — "
@@ -893,8 +894,6 @@ def apply_defaults(features):
         "client_unethical_behavior": False,
         "manager_unethical_response": False,
 
-        "comment_match_level": "none",
-        "comment_complete": False,
         "card_has_reason": False,
         "card_has_followup_time": False
     }
@@ -953,25 +952,16 @@ def validate_forbidden_words(features, dialogue):
 
 
 def validate_friendly_question(features, dialogue):
-    """Валідатор + recovery override для дружнього питання.
-
-    Дружнє питання має стосуватись особисто клієнта (справи, настрій, життя),
-    а не сайту, гри чи наявних у клієнта питань по продукту.
-
-    Працює у двох напрямках:
-    1) Обмеження false positives — якщо LLM поставив True, але жодного
-       надійного патерна немає, опускає до False.
-    2) Recovery override для false negatives — якщо LLM поставив False, але в
-       менеджерських репліках є чіткий дружній патерн (або ASR-спотворена
-       форма + підтверджуючий контекст), примусово ставить True.
-    """
     manager_lines, _ = extract_role_lines(dialogue)
     manager_text = " ".join(manager_lines).lower()
+
     if not manager_text:
+        features["friendly_question"] = False
         return features
 
+    # Точні патерни дружнього питання
     real_friendly_patterns = [
-        r"як\s+(?:ваші\s+|твої\s+)?справи(?!\s+(?:на\s+сайт|по\s+сайт|з\s+сайт))",
+        r"як\s+(?:ваші?\s+|твої?\s+)?справи?(?!\s+(?:на\s+сайт|по\s+сайт|з\s+сайт))",
         r"як\s+настрій",
         r"як\s+(?:ваше?\s+)?життя",
         r"як\s+ви\b(?!\s+там\s+на\s+сайт)",
@@ -979,57 +969,31 @@ def validate_friendly_question(features, dialogue):
         r"як\s+себе\s+почува",
         r"як\s+ваш\s+день",
         r"як\s+вихідн",
+        r"як\s+у\s+вас",
+        r"все\s+добре\s+у\s+вас",
+        r"все\s+гаразд\s+у\s+вас",
+        r"як\s+ти\b",
+        r"як\s+там\s+у\s+вас",
     ]
 
-    # Strong standalone-патерни — достатньо самі по собі для promotion, навіть
-    # якщо LLM поставив friendly_question = False. Включають fuzzy-форми, які
-    # LLM часто не розпізнає як "дружнє питання" через ASR-спотворення.
-    strong_standalone_friendly_patterns = [
-        # Загальний "як [ваші/твої] справ..." — будь-яка форма "справи/справа"
-        r"\bяк\s+(?:ваш[аиіеоя]|тво[яєїі])?\s*справ\w*\b(?!\s+(?:на\s+сайт|по\s+сайт|з\s+сайт))",
-        # Спеціальний fuzzy pattern для очевидного ASR misrecognition "як ваші справи":
-        # Deepgram часто чує це як "яка ваша справа" / "які ваші справа" / "яке ваша справа"
-        r"\bяк[аиіеоя]\s+(?:ваш[аиіеоя]|тво[яєїі])\s+справ\w*\b(?!\s+(?:на\s+сайт|по\s+сайт|з\s+сайт))",
-        # "все добре?" / "все гаразд?" як питання про особистий стан
-        # (виключаємо варіанти про сайт/гру/продукт)
-        r"\bвсе\s+добре\b(?!\s+(?:по\s+сайт|на\s+сайт|з\s+сайт|з\s+грою|по\s+гр|з\s+гр|на\s+сайті|по\s+сайту))",
-        r"\bвсе\s+гаразд\b(?!\s+(?:по\s+сайт|на\s+сайт|з\s+сайт|з\s+грою|на\s+сайті|по\s+сайту))",
+    # ASR-толерантні патерни — фонетично схожі варіанти "як справи"
+    asr_friendly_patterns = [
+        r"яка\s+ваша\s+справа",
+        r"які\s+ваші\s+справа",
+        r"яке\s+ваша\s+справа",
+        r"як\s+ваша\s+справа",
+        r"хочу\s+поцікавитися",
+        r"хотів\s+(?:ся\s+)?поцікавитися",
+        r"хотіла\s+(?:ся\s+)?поцікавитися",
+        r"як\s+у\s+вас\s+(?:справи|настрій|день|вихідн|все)",
     ]
 
-    # Слабкі ASR-патерни — потребують підтверджуючого контексту, щоб уникнути
-    # хибних спрацювань (напр. "як у вас там" без справ контексту).
-    asr_distorted_friendly_patterns = [
-        r"як\s+у\s+вас\s+справ\w*",
-        r"як\s+у\s+тебе\s+справ\w*",
-    ]
+    has_real = any(re.search(p, manager_text) for p in real_friendly_patterns)
+    has_asr = any(re.search(p, manager_text) for p in asr_friendly_patterns)
 
-    # Контекстні маркери інтересу до стану клієнта, які підтверджують слабкі
-    # ASR-патерни вище.
-    friendly_context_markers = [
-        "все добре",
-        "все гаразд",
-        "як ви",
-        "як почува",
-        "як себе почува",
-        "як настрій",
-        "як ваш день",
-    ]
-
-    has_real_friendly = any(re.search(p, manager_text) for p in real_friendly_patterns)
-    has_strong_standalone = any(
-        re.search(p, manager_text) for p in strong_standalone_friendly_patterns
-    )
-    has_asr_distorted = any(re.search(p, manager_text) for p in asr_distorted_friendly_patterns)
-    has_context = any(marker in manager_text for marker in friendly_context_markers)
-
-    asr_friendly_detected = has_asr_distorted and has_context
-
-    # Recovery override + обмеження false positives одним рішенням:
-    # будь-який надійний патерн (реальний, strong standalone, або ASR+контекст)
-    # форсує True — навіть якщо LLM поставив False.
-    if has_real_friendly or has_strong_standalone or asr_friendly_detected:
+    if has_real or has_asr:
         features["friendly_question"] = True
-    elif features.get("friendly_question"):
+    else:
         features["friendly_question"] = False
 
     return features
@@ -1464,61 +1428,25 @@ def validate_card_followup_time(features, manager_comment):
         features["card_has_followup_time"] = True
         return features
 
-    # Цифрові словесні конструкції: "к 5 вечера", "до 5 вечора", "до 7 ранку",
-    # "5 вечора", "7 ранку", "8 вечора" — трактуються як валідний followup time
-    # (5 вечора = 17:00, 7 ранку = 07:00 тощо).
-    if re.search(r"(?:к|до|о|на)\s+\d{1,2}\s*(?:вечор|ранк|ноч|дн)", comment):
-        features["card_has_followup_time"] = True
-        return features
-
-    if re.search(r"\d{1,2}\s+(?:вечор|ранк|ноч)", comment):
-        features["card_has_followup_time"] = True
-        return features
-
-    # Прийменник "к" + прописом число (рос./укр.): "к пяти", "к п'яти", "к шести"
-    if re.search(
-        r"\bк\s+(?:п['\u2019\u02BC]?яти|шести|семи|восьми|дев['\u2019\u02BC]?яти|десяти|одинадцяти|дванадцяти)\b",
-        comment,
-    ):
-        features["card_has_followup_time"] = True
-        return features
-
     time_markers = [
         "завтра",
         "після обіду",
         "після роботи",
-        "після шостої",
-        "після п'ятої",
-        "після четвертої",
         "перезвон",
         "передзвон",
         "через годину",
         "через дві",
         "ввечері",
         "вранці",
-        "вдень",
         "наберу о",
         "передзвоню о",
         "зателефоную о",
-        # Словесні години ("о пʼятій", "на шосту", "к пяти" тощо)
-        "о п'ятій",
-        "о пятій",
-        "о шостій",
-        "о сьомій",
-        "о восьмій",
-        "о дев'ятій",
-        "о девятій",
-        "о десятій",
-        "о одинадцятій",
-        "о дванадцятій",
-        "на п'яту",
-        "на пяту",
-        "на шосту",
-        "на сьому",
-        "на восьму",
-        "на дев'яту",
-        "на девяту",
-        "на десяту",
+        "після вихідних",
+        "в понеділок",
+        "у вівторок",
+        "в середу",
+        "в четвер",
+        "в п'ятницю",
     ]
     if any(marker in comment for marker in time_markers):
         features["card_has_followup_time"] = True
@@ -1573,7 +1501,9 @@ def validate_followup_type(features, dialogue):
         for pattern in [
             r"\bпісля\s+\d{1,2}\b",
             rf"\bпісля\s+{WORD_HOURS_GEN}\b",
+            rf"\bпісля\s+{WORD_HOURS}\b",
             rf"\bпісля\s+{WORD_DATES}(\s+числа)?\b",
+            rf"\bо\s+{WORD_HOURS}\b",
         ]
     )
 
@@ -1602,6 +1532,7 @@ def validate_followup_type(features, dialogue):
     exact_time_patterns = [
         r"\b\d{1,2}[:\.\-]\d{2}\b",
         r"\bо\s+\d{1,2}\b",
+        r"\bо\s+\d{1,2}[\s:]",
         r"\bпісля\s+\d{1,2}\b",
         r"\bближче\s+до?\s*\d{1,2}\b",
         r"\bближче\s+\d{1,2}\b",
@@ -1819,11 +1750,19 @@ def validate_objection_and_retention(features, dialogue):
             features["continuation_level"] = "formal"
 
     if features.get("continuation_level") == "strong":
-        strong_count = 0
-        strong_count += int(real_retention)
-        strong_count += int("інший раз" in manager_text or "через годину" in manager_text or "ближче до вечора" in manager_text)
-        if strong_count < 2:
-            features["continuation_level"] = "weak"
+        # Якщо клієнт 2+ рази сигналізував — достатньо 1 реальної спроби
+        if end_signal_count >= 2 or product_objection_count >= 2:
+            pass  # залишаємо "strong"
+        else:
+            strong_count = 0
+            strong_count += int(real_retention)
+            strong_count += int(
+                "інший раз" in manager_text
+                or "через годину" in manager_text
+                or "ближче до вечора" in manager_text
+            )
+            if strong_count < 2:
+                features["continuation_level"] = "weak"
 
     if features.get("objection_detected") and features.get("continuation_level") == "none":
         if features.get("client_hung_up_interrupted") or real_retention or manager_argumented:
@@ -2387,6 +2326,15 @@ def score_call(f, meta, dialogue=None):
         s["Утримання клієнта"] = 20
     elif not f.get("client_wants_to_end"):
         behavior = f.get("continuation_behavior", "neutral")
+
+        # Захист: якщо менеджер дуже швидко завершив розмову (мало реплік менеджера)
+        # або поведінка вже помічена як пасивна в валідаторі — не давати "active"
+        if behavior == "active":
+            manager_lines_check, _ = extract_role_lines(dialogue or "")
+            # Якщо менеджер має менше 2 реплік — не може бути "active"
+            if len(manager_lines_check) < 2:
+                behavior = "neutral"
+
         s["Утримання клієнта"] = (
             20 if behavior == "active"
             else 15 if behavior == "neutral"
