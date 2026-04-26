@@ -1173,6 +1173,67 @@ def validate_assumption_made(features, dialogue):
         features["assumption_made"] = False
         features["assumption_soft"] = False
 
+    # Перевірка: "вам зручно?" після шуму/паузи = додумування
+    # Менеджер мав питати "чи мене чутно?" а не "вам зручно?"
+    comfort_assumption_markers = [
+        "вам зручно",
+        "вам не зручно",
+        "незручно говорити",
+        "зручно говорити",
+        "зручно зараз",
+        "не заважаю",
+        "не відволікаю",
+    ]
+
+    # Сигнали завершення від клієнта після додумування
+    client_end_signals_after_assumption = [
+        "незручно",
+        "не можу",
+        "не зможу",
+        "передзвоніть",
+        "передзвоню",
+        "пізніше",
+        "зайнятий",
+        "зайнята",
+        "не до",
+        "потім",
+        "не зараз",
+    ]
+
+    has_comfort_assumption = has_any_marker(manager_text, comfort_assumption_markers)
+
+    if has_comfort_assumption:
+        # Перевіряємо чи клієнт після цього дав сигнал завершення
+        # Аналізуємо послідовність реплік
+        manager_lines_list, client_lines_list = extract_role_lines(dialogue)
+        lines = str(dialogue or "").splitlines()
+
+        assumption_index = None
+        for i, line in enumerate(lines):
+            stripped = line.strip().lower()
+            if stripped.startswith("менеджер:"):
+                line_text = stripped.split(":", 1)[1].strip()
+                if any(m in line_text for m in comfort_assumption_markers):
+                    assumption_index = i
+                    break
+
+        if assumption_index is not None:
+            # Перевіряємо наступні 3 репліки клієнта після додумування
+            client_replies_after = []
+            for line in lines[assumption_index + 1:assumption_index + 6]:
+                stripped = line.strip().lower()
+                if stripped.startswith("клієнт:"):
+                    client_replies_after.append(stripped.split(":", 1)[1].strip())
+
+            client_ended_after = any(
+                any(signal in reply for signal in client_end_signals_after_assumption)
+                for reply in client_replies_after
+            )
+
+            if client_ended_after:
+                features["assumption_made"] = True
+                features["assumption_led_to_end"] = True
+
     return features
 
 
@@ -1725,6 +1786,25 @@ def validate_objection_and_retention(features, dialogue):
     product_objection = has_any_marker(client_text, product_objection_markers)
     end_signal_count = count_signal_lines(client_lines_lc, end_call_markers)
     product_objection_count = count_signal_lines(client_lines_lc, product_objection_markers)
+
+    # Перевірка знецінення бонусу
+    devaluation_markers = [
+        "в будь-якому випадку залишу",
+        "в будь-якому випадку я вам",
+        "все одно залишу",
+        "все одно нарахую",
+        "залишу і все",
+        "все рівно залишу",
+        "однаково залишу",
+    ]
+    has_bonus_devaluation = has_any_marker(manager_text, devaluation_markers)
+
+    # Якщо є заперечення по бонусу + знецінення → примусово "none"
+    if product_objection_count >= 1 and has_bonus_devaluation:
+        features["continuation_level"] = "none"
+        features["objection_detected"] = True
+        return features
+
     real_retention = has_any_marker(manager_text, real_retention_markers) or has_any_marker(manager_text, short_talk_markers)
     callback_only = has_any_marker(manager_text, callback_only_markers)
     manager_argumented = (
@@ -2325,46 +2405,49 @@ def score_call(f, meta, dialogue=None):
 
     # ---------------- Утримання ----------------
     lvl = f.get("continuation_level", "none")
-
-    if is_military_client:
-        s["Утримання клієнта"] = 20
-    elif limited_dialogue:
-        s["Утримання клієнта"] = 20
-    elif not f.get("client_wants_to_end"):
-        behavior = f.get("continuation_behavior", "neutral")
-
-        # Захист: якщо менеджер дуже швидко завершив розмову (мало реплік менеджера)
-        # або поведінка вже помічена як пасивна в валідаторі — не давати "active"
-        if behavior == "active":
-            manager_lines_check, _ = extract_role_lines(dialogue or "")
-            manager_full_text = " ".join(manager_lines_check).lower()
-
-            if len(manager_lines_check) < 2:
-                behavior = "neutral"
-            else:
-                engagement_markers = [
-                    "розкажу", "розповім", "хочу поговорити", "хочу поспілкуватись",
-                    "поспілкуємось", "розкажіть", "підкажіть", "запитати хотів",
-                    "питання маєте", "як вам сайт", "як відпочивали",
-                    "цікаво", "корисно", "активність", "програма",
-                ]
-                has_engagement = any(m in manager_full_text for m in engagement_markers)
-                if not has_engagement and len(manager_lines_check) < 5:
-                    behavior = "neutral"
-
-        s["Утримання клієнта"] = (
-            20 if behavior == "active"
-            else 15 if behavior == "neutral"
-            else 0 if behavior == "passive"
-            else 0
-        )
+    # Якщо додумування призвело до завершення розмови — утримання = 0
+    if f.get("assumption_led_to_end"):
+        s["Утримання клієнта"] = 0
     else:
-        s["Утримання клієнта"] = (
-            20 if lvl == "strong"
-            else 15 if lvl == "weak"
-            else 10 if lvl == "formal"
-            else 0
-        )
+        if is_military_client:
+            s["Утримання клієнта"] = 20
+        elif limited_dialogue:
+            s["Утримання клієнта"] = 20
+        elif not f.get("client_wants_to_end"):
+            behavior = f.get("continuation_behavior", "neutral")
+
+            # Захист: якщо менеджер дуже швидко завершив розмову (мало реплік менеджера)
+            # або поведінка вже помічена як пасивна в валідаторі — не давати "active"
+            if behavior == "active":
+                manager_lines_check, _ = extract_role_lines(dialogue or "")
+                manager_full_text = " ".join(manager_lines_check).lower()
+
+                if len(manager_lines_check) < 2:
+                    behavior = "neutral"
+                else:
+                    engagement_markers = [
+                        "розкажу", "розповім", "хочу поговорити", "хочу поспілкуватись",
+                        "поспілкуємось", "розкажіть", "підкажіть", "запитати хотів",
+                        "питання маєте", "як вам сайт", "як відпочивали",
+                        "цікаво", "корисно", "активність", "програма",
+                    ]
+                    has_engagement = any(m in manager_full_text for m in engagement_markers)
+                    if not has_engagement and len(manager_lines_check) < 5:
+                        behavior = "neutral"
+
+            s["Утримання клієнта"] = (
+                20 if behavior == "active"
+                else 15 if behavior == "neutral"
+                else 0 if behavior == "passive"
+                else 0
+            )
+        else:
+            s["Утримання клієнта"] = (
+                20 if lvl == "strong"
+                else 15 if lvl == "weak"
+                else 10 if lvl == "formal"
+                else 0
+            )
 
     # ---------------- Заперечення ----------------
     if is_military_client:
