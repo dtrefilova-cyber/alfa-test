@@ -2832,6 +2832,14 @@ if run_openai or run_claude:
             clean_dialogue = apply_replacements(transcript, replacements)
             features = analysis_result.get("features", {})
             features = run_all_validators(features, clean_dialogue, call, kb_data)
+
+            # ТИМЧАСОВО — видалити після тестування
+            st.write("DEBUG assumption:", {
+                "assumption_made": features.get("assumption_made"),
+                "assumption_soft": features.get("assumption_soft"),
+                "assumption_led_to_end": features.get("assumption_led_to_end"),
+            })
+
             if not features:
                 st.warning("Помилка аналізу")
                 continue
