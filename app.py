@@ -1811,6 +1811,7 @@ def validate_objection_and_retention(features, dialogue):
     if product_objection_count >= 1 and has_bonus_devaluation:
         features["continuation_level"] = "none"
         features["objection_detected"] = True
+        features["bonus_devaluation_with_objection"] = True
         return features
 
     real_retention = has_any_marker(manager_text, real_retention_markers) or has_any_marker(manager_text, short_talk_markers)
@@ -2381,7 +2382,9 @@ def score_call(f, meta, dialogue=None):
         )
 
     # ---------------- Не додумувати ----------------
-    if f.get("assumption_made"):
+    if f.get("assumption_led_to_end"):
+        s["Не додумувати"] = 0
+    elif f.get("assumption_made"):
         s["Не додумувати"] = 2.5 if f.get("assumption_soft") else 0
     else:
         s["Не додумувати"] = 5
@@ -2460,7 +2463,7 @@ def score_call(f, meta, dialogue=None):
     # ---------------- Заперечення ----------------
     if is_military_client:
         s["Робота із запереченнями"] = 10
-    elif limited_dialogue:
+    elif limited_dialogue and not f.get("bonus_devaluation_with_objection"):
         s["Робота із запереченнями"] = 10
     elif not f.get("objection_detected"):
         s["Робота із запереченнями"] = 10
