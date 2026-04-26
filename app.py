@@ -1211,36 +1211,33 @@ def validate_assumption_made(features, dialogue):
     )
 
     if has_comfort_assumption:
-        # Перевіряємо чи клієнт після цього дав сигнал завершення
-        # Аналізуємо послідовність реплік
-        manager_lines_list, client_lines_list = extract_role_lines(dialogue)
-        lines = str(dialogue or "").splitlines()
+        # Шукаємо по загальному тексту клієнта — не по рядках,
+        # бо GPT може склеїти репліки в одну
+        client_end_signals_after_assumption = [
+            "незручно",
+            "не можу",
+            "не зможу",
+            "передзвоніть",
+            "передзвоню",
+            "пізніше",
+            "зайнятий",
+            "зайнята",
+            "не до",
+            "потім",
+            "не зараз",
+            "ми там",
+            "не дуже",
+            "не чую",
+        ]
 
-        assumption_index = None
-        for i, line in enumerate(lines):
-            stripped = line.strip().lower()
-            if stripped.startswith("менеджер:"):
-                line_text = stripped.split(":", 1)[1].strip()
-                if any(m in line_text for m in comfort_assumption_markers):
-                    assumption_index = i
-                    break
+        client_ended_after = any(
+            signal in client_text
+            for signal in client_end_signals_after_assumption
+        )
 
-        if assumption_index is not None:
-            # Перевіряємо наступні 3 репліки клієнта після додумування
-            client_replies_after = []
-            for line in lines[assumption_index + 1:assumption_index + 6]:
-                stripped = line.strip().lower()
-                if stripped.startswith("клієнт:"):
-                    client_replies_after.append(stripped.split(":", 1)[1].strip())
-
-            client_ended_after = any(
-                any(signal in reply for signal in client_end_signals_after_assumption)
-                for reply in client_replies_after
-            )
-
-            if client_ended_after:
-                features["assumption_made"] = True
-                features["assumption_led_to_end"] = True
+        if client_ended_after:
+            features["assumption_made"] = True
+            features["assumption_led_to_end"] = True
 
     return features
 
