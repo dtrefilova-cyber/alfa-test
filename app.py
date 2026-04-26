@@ -1173,8 +1173,8 @@ def validate_assumption_made(features, dialogue):
         features["assumption_made"] = False
         features["assumption_soft"] = False
 
-    # Перевірка: "вам зручно?" після шуму/паузи = додумування
-    # Менеджер мав питати "чи мене чутно?" а не "вам зручно?"
+    # Comfort assumption — перевіряється ЗАВЖДИ після основного блоку
+    # і може перезаписати assumption_made навіть якщо client_already_signaled
     comfort_assumption_markers = [
         "вам зручно",
         "вам не зручно",
@@ -1187,21 +1187,6 @@ def validate_assumption_made(features, dialogue):
         "вам зараз зручно",
     ]
 
-    # Сигнали завершення від клієнта після додумування
-    client_end_signals_after_assumption = [
-        "незручно",
-        "не можу",
-        "не зможу",
-        "передзвоніть",
-        "передзвоню",
-        "пізніше",
-        "зайнятий",
-        "зайнята",
-        "не до",
-        "потім",
-        "не зараз",
-    ]
-
     has_comfort_assumption = any(
         re.search(m.replace(" ", r"\s+"), manager_text)
         for m in comfort_assumption_markers
@@ -1211,31 +1196,12 @@ def validate_assumption_made(features, dialogue):
     )
 
     if has_comfort_assumption:
-        # Шукаємо по загальному тексту клієнта — не по рядках,
-        # бо GPT може склеїти репліки в одну
-        client_end_signals_after_assumption = [
-            "незручно",
-            "не можу",
-            "не зможу",
-            "передзвоніть",
-            "передзвоню",
-            "пізніше",
-            "зайнятий",
-            "зайнята",
-            "не до",
-            "потім",
-            "не зараз",
-            "ми там",
-            "не дуже",
-            "не чую",
+        client_end_signals = [
+            "незручно", "не можу", "не зможу", "передзвоніть",
+            "пізніше", "зайнятий", "зайнята", "не до",
+            "потім", "не зараз", "ми там", "не дуже", "не чую",
         ]
-
-        client_ended_after = any(
-            signal in client_text
-            for signal in client_end_signals_after_assumption
-        )
-
-        if client_ended_after:
+        if any(signal in client_text for signal in client_end_signals):
             features["assumption_made"] = True
             features["assumption_led_to_end"] = True
 
@@ -2231,7 +2197,7 @@ def score_call(f, meta, dialogue=None):
     # Обмежений діалог (клієнт зайнятий/за кермом/просить передзвонити тощо):
     # за правилами промпта не занижуємо за відсутність презентації/аргументації
     # та не штрафуємо за відсутність утримання.
-    limited_dialogue = bool(f.get("is_limited_dialogue"))
+    limited_dialogue = bool(f.get("is_limited_dialogue")) and not bool(f.get("assumption_led_to_end"))
 
     # Особливий сценарій: клієнт сам перервав розмову під час заперечення.
     # За правилами А/Б: Бонус/Презентація/Домовленість — максимум; Передзвон: 15 тільки якщо був протягом години, інакше 0.
