@@ -1183,6 +1183,8 @@ def validate_assumption_made(features, dialogue):
         "зручно зараз",
         "не заважаю",
         "не відволікаю",
+        "чи вам зручно",
+        "вам зараз зручно",
     ]
 
     # Сигнали завершення від клієнта після додумування
@@ -1200,7 +1202,13 @@ def validate_assumption_made(features, dialogue):
         "не зараз",
     ]
 
-    has_comfort_assumption = has_any_marker(manager_text, comfort_assumption_markers)
+    has_comfort_assumption = any(
+        re.search(m.replace(" ", r"\s+"), manager_text)
+        for m in comfort_assumption_markers
+    ) or any(
+        m.rstrip("?!.,") in manager_text
+        for m in comfort_assumption_markers
+    )
 
     if has_comfort_assumption:
         # Перевіряємо чи клієнт після цього дав сигнал завершення
