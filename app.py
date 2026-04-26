@@ -510,7 +510,14 @@ def transcribe_audio_cached(url, keyterms=()):
         if utterances:
             dialogue = []
             for u in utterances:
-                speaker = f"ch_{u.get('speaker', 0)}"
+                # При multichannel беремо channel (номер каналу) як ідентифікатор спікера
+                # бо кожен канал = окрема людина. speaker може плутати при diarize.
+                channel = u.get("channel")
+                speaker_id = u.get("speaker", 0)
+                if channel is not None:
+                    speaker = f"ch_{channel}"
+                else:
+                    speaker = f"ch_{speaker_id}"
                 text = (u.get("transcript", "") or "").strip()
                 if text:
                     dialogue.append(f"{speaker}: {text}")
