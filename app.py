@@ -2197,7 +2197,11 @@ def score_call(f, meta, dialogue=None):
     # Обмежений діалог (клієнт зайнятий/за кермом/просить передзвонити тощо):
     # за правилами промпта не занижуємо за відсутність презентації/аргументації
     # та не штрафуємо за відсутність утримання.
-    limited_dialogue = bool(f.get("is_limited_dialogue")) and not bool(f.get("assumption_led_to_end"))
+    limited_dialogue = (
+        bool(f.get("is_limited_dialogue"))
+        and not bool(f.get("assumption_led_to_end"))
+        and not bool(f.get("bonus_devaluation_with_objection"))
+    )
 
     # Особливий сценарій: клієнт сам перервав розмову під час заперечення.
     # За правилами А/Б: Бонус/Презентація/Домовленість — максимум; Передзвон: 15 тільки якщо був протягом години, інакше 0.
