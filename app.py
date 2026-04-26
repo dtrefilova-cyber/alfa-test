@@ -2815,13 +2815,6 @@ if run_openai or run_claude:
                 m.rstrip("?!.,") in manager_text_dbg
                 for m in comfort_markers_dbg
             )
-            st.write("DEBUG assumption:", {
-                "assumption_made": features.get("assumption_made"),
-                "assumption_led_to_end": features.get("assumption_led_to_end"),
-                "has_comfort_assumption": has_comfort_dbg,
-                "manager_text_snippet": manager_text_dbg[:300],
-            })
-
             if not features:
                 st.warning("Помилка аналізу")
                 continue
