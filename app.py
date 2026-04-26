@@ -506,18 +506,20 @@ def transcribe_audio_cached(url, keyterms=()):
         channels = results.get("channels", [])
         utterances = results.get("utterances", [])
 
-        all_words = []
-
-        if not channels and utterances:
+        # Пріоритет 1: utterances від Deepgram (краще розбиття по спікерах і паузах)
+        if utterances:
             dialogue = []
             for u in utterances:
                 speaker = f"ch_{u.get('speaker', 0)}"
-                text = u.get("transcript", "")
+                text = (u.get("transcript", "") or "").strip()
                 if text:
                     dialogue.append(f"{speaker}: {text}")
-            transcript_text = post_process_transcript("\n".join(dialogue))
-            return {"ok": True, "error": "", "transcript": transcript_text}
+            if dialogue:
+                transcript_text = post_process_transcript("\n".join(dialogue))
+                return {"ok": True, "error": "", "transcript": transcript_text}
 
+        # Пріоритет 2: ручне збирання по словах з каналів (fallback якщо utterances порожні)
+        all_words = []
         for ch_index, ch in enumerate(channels):
             alternatives = ch.get("alternatives", [])
             if not alternatives:
@@ -547,7 +549,7 @@ def transcribe_audio_cached(url, keyterms=()):
             speaker = w["speaker"]
             pause = w["start"] - last_end
 
-            if speaker != current_speaker or pause > 1.5:
+            if speaker != current_speaker or pause > 2.5:
                 if current_phrase:
                     dialogue.append(f"{current_speaker}: {' '.join(current_phrase)}")
 
@@ -576,7 +578,7 @@ def transcribe_audio(url, keyterms=()):
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def clean_transcript_cached(raw_transcript, cache_version):
+def clean_transcript_cached(raw_transcript, cache_version, manager_name=""):
     if not raw_transcript:
         return raw_transcript
     try:
@@ -603,9 +605,14 @@ def clean_transcript_cached(raw_transcript, cache_version):
                         "9. Назви проєктів — тільки ці три варіанти: '777', 'Betking', 'Vegas'. "
                         "Якщо чуєш схоже — виправляй: '777-сім', '777 сім', 'три сімки' → '777'; "
                         "'беткінг', 'бетінг', 'веткінг', 'бетківг' → 'Betking'; "
-                        "'вейджер', 'вегас', 'веджас', 'Zegas', 'Vegy' → 'Vegas'\n"
+                        "'вегас', 'веджас', 'Zegas', 'Vegy' → 'Vegas'. "
+                        "УВАГА: слово 'вейджер' у значенні умови бонусу ('без вейджера', 'вейджер x30', 'відіграш') — НЕ замінювати на 'Vegas'. "
+                        "'вейджер' замінювати на 'Vegas' тільки якщо це назва сайту або проєкту ('менеджер Vegas', 'сайт Vegas').\n"
                         "10. Репліки коротше 3 слів ('так', 'а', 'угу', 'о') — приєднуй до попередньої репліки того ж спікера якщо вона є\n"
-                        "11. Імена менеджерів беруться з контексту розмови — якщо менеджер назвав своє ім'я, зберігай його точно\n"
+                        "11. Імена менеджерів: правильне ім'я менеджера цього дзвінка: "
+                        + (manager_name if manager_name else "невідомо")
+                        + ". Якщо в транскрипті ім'я менеджера спотворено ASR — виправляй до цього імені. "
+                        "Якщо менеджер називає себе схожим ім'ям — виправляй до зазначеного.\n"
                         "12. Виправляй фонетичні помилки ASR: слова, що звучать близько до розпізнаного, але за змістом фрази очевидно інші "
                         "('бонас' → 'бонус', 'деп ступ' → 'депозит', 'фрі спин' → 'фріспін')\n"
                         "13. Реконструюй спотворені слова по контексту: якщо слово виглядає як ASR-сміття, але сусідні слова дають однозначне значення — "
@@ -982,6 +989,11 @@ def validate_friendly_question(features, dialogue):
         r"які\s+ваші\s+справа",
         r"яке\s+ваша\s+справа",
         r"як\s+ваша\s+справа",
+        r"як\s+там\s+ваша\s+справа",
+        r"яка\s+там\s+ваша\s+справа",
+        r"гради\s+(?:вас\s+)?чути",
+        r"радий\s+(?:вас\s+)?чути",
+        r"рада\s+(?:вас\s+)?чути",
         r"хочу\s+поцікавитися",
         r"хотів\s+(?:ся\s+)?поцікавитися",
         r"хотіла\s+(?:ся\s+)?поцікавитися",
@@ -1441,12 +1453,6 @@ def validate_card_followup_time(features, manager_comment):
         "наберу о",
         "передзвоню о",
         "зателефоную о",
-        "після вихідних",
-        "в понеділок",
-        "у вівторок",
-        "в середу",
-        "в четвер",
-        "в п'ятницю",
     ]
     if any(marker in comment for marker in time_markers):
         features["card_has_followup_time"] = True
@@ -2331,9 +2337,20 @@ def score_call(f, meta, dialogue=None):
         # або поведінка вже помічена як пасивна в валідаторі — не давати "active"
         if behavior == "active":
             manager_lines_check, _ = extract_role_lines(dialogue or "")
-            # Якщо менеджер має менше 2 реплік — не може бути "active"
+            manager_full_text = " ".join(manager_lines_check).lower()
+
             if len(manager_lines_check) < 2:
                 behavior = "neutral"
+            else:
+                engagement_markers = [
+                    "розкажу", "розповім", "хочу поговорити", "хочу поспілкуватись",
+                    "поспілкуємось", "розкажіть", "підкажіть", "запитати хотів",
+                    "питання маєте", "як вам сайт", "як відпочивали",
+                    "цікаво", "корисно", "активність", "програма",
+                ]
+                has_engagement = any(m in manager_full_text for m in engagement_markers)
+                if not has_engagement and len(manager_lines_check) < 5:
+                    behavior = "neutral"
 
         s["Утримання клієнта"] = (
             20 if behavior == "active"
@@ -2696,7 +2713,11 @@ if run_openai or run_claude:
             raw_transcript = apply_replacements(raw_transcript, replacements)
             raw_transcript = merge_short_fragments(raw_transcript)
 
-            transcript = clean_transcript_cached(raw_transcript, ANALYSIS_CACHE_VERSION)
+            transcript = clean_transcript_cached(
+                raw_transcript,
+                ANALYSIS_CACHE_VERSION,
+                manager_name=call.get("ret_manager", "")
+            )
             transcript = apply_replacements(transcript, replacements)
 
             analysis_result = analyze_call_cached(
