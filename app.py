@@ -2834,10 +2834,25 @@ if run_openai or run_claude:
             features = run_all_validators(features, clean_dialogue, call, kb_data)
 
             # ТИМЧАСОВО — видалити після тестування
+            manager_lines_dbg, client_lines_dbg = extract_role_lines(clean_dialogue)
+            manager_text_dbg = " ".join(manager_lines_dbg).lower()
+            comfort_markers_dbg = [
+                "вам зручно", "вам не зручно", "незручно говорити",
+                "зручно говорити", "зручно зараз", "не заважаю",
+                "не відволікаю", "чи вам зручно", "вам зараз зручно",
+            ]
+            has_comfort_dbg = any(
+                re.search(m.replace(" ", r"\s+"), manager_text_dbg)
+                for m in comfort_markers_dbg
+            ) or any(
+                m.rstrip("?!.,") in manager_text_dbg
+                for m in comfort_markers_dbg
+            )
             st.write("DEBUG assumption:", {
                 "assumption_made": features.get("assumption_made"),
-                "assumption_soft": features.get("assumption_soft"),
                 "assumption_led_to_end": features.get("assumption_led_to_end"),
+                "has_comfort_assumption": has_comfort_dbg,
+                "manager_text_snippet": manager_text_dbg[:300],
             })
 
             if not features:
