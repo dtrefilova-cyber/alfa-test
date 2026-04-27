@@ -651,6 +651,11 @@ def clean_transcript_cached(raw_transcript, cache_version, manager_name=""):
         return raw_transcript
 
 
+if st.button("🧨 Скинути ввесь кеш", type="secondary"):
+    st.cache_data.clear()
+    st.success("Ввесь кеш очищено")
+
+
 if st.button("🗑️ Скинути кеш транскрипцій", type="secondary"):
     transcribe_audio_cached.clear()
     clean_transcript_cached.clear()
