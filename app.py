@@ -2325,6 +2325,7 @@ def score_call(f, meta, dialogue=None):
     )
     s["Домовленість про наступний контакт"] = (
         5 if followup_type == "exact_time"
+        else 5 if is_driving_or_no_phone and followup_type != "none"
         else 2.5 if has_partial_followup_signal
         else 0
     )
