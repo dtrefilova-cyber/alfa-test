@@ -2845,6 +2845,8 @@ if run_openai or run_claude:
             features = run_all_validators(features, clean_dialogue, call, kb_data)
 
             # ТИМЧАСОВО — видалити після тестування
+            if "debug_log" not in st.session_state:
+                st.session_state.debug_log = []
             st.session_state.debug_log.append({
                 "call": call.get("client_id", ""),
                 "is_limited_dialogue": features.get("is_limited_dialogue"),
