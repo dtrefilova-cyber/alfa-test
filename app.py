@@ -1003,6 +1003,7 @@ def validate_friendly_question(features, dialogue):
         r"як\s+там\s+ваша\s+справа",
         r"яка\s+там\s+ваша\s+справа",
         r"гради\s+(?:вас\s+)?чути",
+        r"гради\s+чути",
         r"радий\s+(?:вас\s+)?чути",
         r"рада\s+(?:вас\s+)?чути",
         r"хочу\s+поцікавитися",
@@ -1485,7 +1486,6 @@ def validate_card_followup_time(features, manager_comment):
 
     time_markers = [
         "завтра",
-        "після обіду",
         "після роботи",
         "перезвон",
         "передзвон",
@@ -1553,6 +1553,8 @@ def validate_followup_type(features, dialogue):
             rf"\bпісля\s+{WORD_HOURS}\b",
             rf"\bпісля\s+{WORD_DATES}(\s+числа)?\b",
             rf"\bо\s+{WORD_HOURS}\b",
+            r"\bдесь\s+\d{1,2}:\d{2}\b",
+            r"\bдесь\s+о\s+\d{1,2}\b",
         ]
     )
 
@@ -2401,8 +2403,6 @@ def score_call(f, meta, dialogue=None):
         s["Утримання клієнта"] = 0
     else:
         if is_military_client:
-            s["Утримання клієнта"] = 20
-        elif limited_dialogue:
             s["Утримання клієнта"] = 20
         elif not f.get("client_wants_to_end"):
             behavior = f.get("continuation_behavior", "neutral")
