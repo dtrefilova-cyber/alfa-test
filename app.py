@@ -2785,6 +2785,7 @@ run_claude = col2.button("🧠 Claude")
 
 if run_openai or run_claude:
     st.session_state["results"].clear()
+    st.session_state.debug_log = []
 
     google_client = None
     replacements = {}
@@ -2841,8 +2842,6 @@ if run_openai or run_claude:
             features = run_all_validators(features, clean_dialogue, call, kb_data)
 
             # ТИМЧАСОВО — видалити після тестування
-            if "debug_log" not in st.session_state:
-                st.session_state.debug_log = []
             st.session_state.debug_log.append({
                 "call": call.get("client_id", ""),
                 "is_limited_dialogue": features.get("is_limited_dialogue"),
@@ -2952,11 +2951,11 @@ if run_openai or run_claude:
                 except Exception as e:
                     st.error(f"Google error [LOG_INFO]: {e}")
 
-    # ТИМЧАСОВО — видалити після тестування
-    if st.session_state.get("debug_log"):
-        st.write("DEBUG LOG:", st.session_state.debug_log)
-
     st.rerun()
+
+# ТИМЧАСОВО — видалити після тестування (після rerun кнопка не активна — виводити поза RUN-блоком)
+if st.session_state.get("debug_log"):
+    st.write("DEBUG LOG:", st.session_state.debug_log)
 
 # ================= EXPORT =================
 if st.session_state["results"]:
