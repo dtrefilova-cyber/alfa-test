@@ -5,6 +5,7 @@ import json
 import re
 import os
 from google_sheets import (
+    append_debug_log,
     append_log_info,
     append_manager_log,
     append_qa_log,
@@ -2788,7 +2789,6 @@ run_claude = col2.button("🧠 Claude")
 
 if run_openai or run_claude:
     st.session_state["results"].clear()
-    st.session_state.debug_log = []
 
     google_client = None
     replacements = {}
@@ -2845,10 +2845,7 @@ if run_openai or run_claude:
             features = run_all_validators(features, clean_dialogue, call, kb_data)
 
             # ТИМЧАСОВО — видалити після тестування
-            if "debug_log" not in st.session_state:
-                st.session_state.debug_log = []
-            st.session_state.debug_log.append({
-                "call": call.get("client_id", ""),
+            debug_data = {
                 "is_limited_dialogue": features.get("is_limited_dialogue"),
                 "client_driving": features.get("client_driving_or_no_phone"),
                 "client_wants_to_end": features.get("client_wants_to_end"),
@@ -2858,7 +2855,8 @@ if run_openai or run_claude:
                     l for l in (clean_dialogue or "").splitlines()
                     if l.lower().startswith("менеджер:")
                 ])[:300],
-            })
+            }
+            append_debug_log(google_client, call.get("client_id", ""), debug_data)
             if not features:
                 st.warning("Помилка аналізу")
                 continue
@@ -2963,10 +2961,6 @@ if run_openai or run_claude:
                     st.error(f"Google error [LOG_INFO]: {e}")
 
     st.rerun()
-
-# ТИМЧАСОВО — видалити після тестування (після rerun кнопка не активна — виводити поза RUN-блоком)
-if st.session_state.get("debug_log"):
-    st.write("DEBUG LOG:", st.session_state.debug_log)
 
 # ================= EXPORT =================
 if st.session_state["results"]:
