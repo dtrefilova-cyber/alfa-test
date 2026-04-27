@@ -2847,6 +2847,8 @@ if run_openai or run_claude:
                 "is_limited_dialogue": features.get("is_limited_dialogue"),
                 "client_driving": features.get("client_driving_or_no_phone"),
                 "client_wants_to_end": features.get("client_wants_to_end"),
+                "continuation_level": features.get("continuation_level"),
+                "objection_detected": features.get("objection_detected"),
             })
             if not features:
                 st.warning("Помилка аналізу")
