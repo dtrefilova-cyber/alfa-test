@@ -2852,6 +2852,10 @@ if run_openai or run_claude:
                 "client_wants_to_end": features.get("client_wants_to_end"),
                 "continuation_level": features.get("continuation_level"),
                 "objection_detected": features.get("objection_detected"),
+                "manager_text_snippet": " ".join([
+                    l for l in (clean_dialogue or "").splitlines()
+                    if l.lower().startswith("менеджер:")
+                ])[:300],
             })
             if not features:
                 st.warning("Помилка аналізу")
