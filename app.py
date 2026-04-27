@@ -651,9 +651,9 @@ def clean_transcript_cached(raw_transcript, cache_version, manager_name=""):
         return raw_transcript
 
 
-if st.button("🧨 Скинути ввесь кеш", type="secondary"):
+if st.button("🧨 Скинути весь кеш", type="secondary"):
     st.cache_data.clear()
-    st.success("Ввесь кеш очищено")
+    st.success("Весь кеш очищено")
 
 
 if st.button("🗑️ Скинути кеш транскрипцій", type="secondary"):
@@ -1756,6 +1756,11 @@ def validate_objection_and_retention(features, dialogue):
         "на який час",
         "о котрій",
         "коли буде зручно",
+        "коли вам перетелефонувати",
+        "коли можна передзвонити",
+        "у котрій годині",
+        "в який час",
+        "перенесемо розмову",
     ]
     short_talk_markers = [
         "маєте пару хвилин",
@@ -2420,6 +2425,11 @@ def score_call(f, meta, dialogue=None):
     else:
         if is_military_client:
             s["Утримання клієнта"] = 20
+        elif is_driving_or_no_phone:
+            s["Утримання клієнта"] = (
+                20 if lvl in {"strong", "weak", "formal"}
+                else 15
+            )
         elif not f.get("client_wants_to_end"):
             behavior = f.get("continuation_behavior", "neutral")
 
