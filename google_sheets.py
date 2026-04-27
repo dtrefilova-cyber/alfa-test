@@ -254,6 +254,22 @@ def append_qa_log(sheet, call, transcript, clean_dialogue, comment, total_score)
         return str(e)
 
 
+def append_debug_log(google_client, call_id, debug_data):
+    """Записує debug інфо у таблицю."""
+    try:
+        sheet = google_client.open_by_key("1kRkn3MpH75onRr0JWKaor4i6aGc9zmc5FfgqqO2jfMg").worksheet("Лист1")
+        row_index = find_next_row(sheet, start_row=2, key_column=1)
+        from datetime import datetime
+        values = [[
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            str(call_id),
+            str(debug_data),
+        ]]
+        sheet.update(f"A{row_index}:C{row_index}", values, value_input_option="RAW")
+    except Exception as e:
+        pass  # debug не має зупиняти аналіз
+
+
 def append_log_info(sheet, call):
     """Додає в LOG_INFO всі значення, які ввели у форму вручну."""
     try:
