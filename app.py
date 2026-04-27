@@ -1688,25 +1688,14 @@ def validate_dialogue_exceptions(features, dialogue):
     features["is_limited_dialogue"] = has_limited_dialogue or has_driving_context
     features["client_driving_or_no_phone"] = has_driving_context
 
-    # Якщо клієнт спочатку відмовився але потім погодився продовжити —
-    # це не обмежений діалог
+    # Якщо клієнт сам назвав конкретний час — це не обмежений діалог
     if features.get("is_limited_dialogue"):
-        agreement_markers = [
-            "добре", "ок", "окей", "давайте", "згоден", "згодна",
-            "слухаю", "розповідайте", "кажіть", "чудово",
-        ]
-        client_agreed = any(m in client_text for m in agreement_markers)
-
-        # Якщо є домовленість про час — клієнт явно погодився
-        has_followup_agreed = bool(re.search(
-            r"\d{1,2}:\d{2}|о \d{1,2}|після \d{1,2}|в обід|ввечері|завтра",
+        client_named_time = bool(re.search(
+            r"\d{1,2}:\d{2}|в обід|після обіду|о \d{1,2}|після \d{1,2}",
             client_text
         ))
-
-        # Якщо менеджер після відмови продовжив розмову (4+ реплік після першої відмови)
         manager_continued = len(manager_lines) >= 4
-
-        if (client_agreed or has_followup_agreed) and manager_continued:
+        if client_named_time and manager_continued:
             features["is_limited_dialogue"] = False
 
     return features
