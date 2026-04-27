@@ -2841,20 +2841,14 @@ if run_openai or run_claude:
             features = run_all_validators(features, clean_dialogue, call, kb_data)
 
             # ТИМЧАСОВО — видалити після тестування
-            manager_lines_dbg, client_lines_dbg = extract_role_lines(clean_dialogue)
-            manager_text_dbg = " ".join(manager_lines_dbg).lower()
-            comfort_markers_dbg = [
-                "вам зручно", "вам не зручно", "незручно говорити",
-                "зручно говорити", "зручно зараз", "не заважаю",
-                "не відволікаю", "чи вам зручно", "вам зараз зручно",
-            ]
-            has_comfort_dbg = any(
-                re.search(m.replace(" ", r"\s+"), manager_text_dbg)
-                for m in comfort_markers_dbg
-            ) or any(
-                m.rstrip("?!.,") in manager_text_dbg
-                for m in comfort_markers_dbg
-            )
+            if "debug_log" not in st.session_state:
+                st.session_state.debug_log = []
+            st.session_state.debug_log.append({
+                "call": call.get("client_id", ""),
+                "is_limited_dialogue": features.get("is_limited_dialogue"),
+                "client_driving": features.get("client_driving_or_no_phone"),
+                "client_wants_to_end": features.get("client_wants_to_end"),
+            })
             if not features:
                 st.warning("Помилка аналізу")
                 continue
@@ -2957,6 +2951,10 @@ if run_openai or run_claude:
                         st.error(f"Google error [LOG_INFO]: {log_info_res}")
                 except Exception as e:
                     st.error(f"Google error [LOG_INFO]: {e}")
+
+    # ТИМЧАСОВО — видалити після тестування
+    if st.session_state.get("debug_log"):
+        st.write("DEBUG LOG:", st.session_state.debug_log)
 
     st.rerun()
 
