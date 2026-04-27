@@ -56,7 +56,7 @@ claude_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_
 LOG_SHEET_ID = "1gElj3hB5CX86YsVQFG2M9DpfvMUMPq2lfuSNj-ylN94"
 DICT_SHEET_ID = "1gElj3hB5CX86YsVQFG2M9DpfvMUMPq2lfuSNj-ylN94"
 KB_SHEET_ID = "1yZbtao1P1Xa0r6ZJAnjkJWikxcWQ90XbXvaT7EWQKeU"
-ANALYSIS_CACHE_VERSION = "2026-04-23-2"
+ANALYSIS_CACHE_VERSION = "2026-04-27-1"
 OPENAI_ANALYSIS_MODEL = st.secrets.get("OPENAI_MODEL", "gpt-5.4-mini")
 CLAUDE_ANALYSIS_MODEL = st.secrets.get("CLAUDE_MODEL", "claude-sonnet-4-20250514")
 OPENAI_TRANSCRIPT_MODEL = st.secrets.get("OPENAI_TRANSCRIPT_MODEL", "gpt-4o-mini")
@@ -1397,7 +1397,7 @@ def validate_card_features(features):
     # час передзвону у коментарі не є обов'язковим елементом.
     followup_none = features.get("followup_type", "none") == "none"
     client_hung_up = bool(features.get("client_hung_up_interrupted"))
-    if (followup_none or client_hung_up) and features.get("card_has_reason"):
+    if client_hung_up and features.get("card_has_reason"):
         features["card_has_followup_time"] = True
     return features
 
@@ -1665,6 +1665,8 @@ def validate_dialogue_exceptions(features, dialogue):
         "не можу зараз",
         "мені незручно",
         "немає часу говорити",
+        "немає часу",
+        "нема часу",
         "передзвоніть",
         "передзвони",
         "зараз не можу",
