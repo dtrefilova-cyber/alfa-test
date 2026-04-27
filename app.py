@@ -1814,10 +1814,9 @@ def validate_objection_and_retention(features, dialogue):
         return features
 
     real_retention = has_any_marker(manager_text, real_retention_markers) or has_any_marker(manager_text, short_talk_markers)
-    callback_only = has_any_marker(manager_text, callback_only_markers) or (
-        has_any_marker(manager_text, ["коли", "котр", "який час", "о котр"])
+    callback_only = (
+        any(m in manager_text for m in callback_only_markers)
         and not real_retention
-        and not has_any_marker(manager_text, real_retention_markers)
     )
     manager_argumented = (
         has_any_marker(manager_text, real_retention_markers)
