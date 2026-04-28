@@ -1475,8 +1475,7 @@ def validate_card_followup_time(features, manager_comment):
     Незалежна перевірка коментаря на наявність часу наступного контакту.
     Спрацьовує поверх рішення АІ.
     """
-    if features.get("card_has_followup_time"):
-        return features
+    features["card_has_followup_time"] = False
 
     comment = str(manager_comment or "").lower()
     if not comment.strip():
@@ -2501,8 +2500,32 @@ def score_call(f, meta, dialogue=None):
         )
 
     if unethical_client_behavior and not manager_unethical_response:
-        s["Утримання клієнта"] = 20
-        s["Робота із запереченнями"] = 10
+        # Перевіряємо чи лайка була до прощання — якщо після, не штрафуємо
+        farewell_markers_check = ["до побачення", "бувайте", "гарного дня", "гарного вечора", "всього доброго"]
+        manager_lines_check, client_lines_check = extract_role_lines(dialogue or "")
+        full_text_lines = (dialogue or "").splitlines()
+
+        # Знаходимо індекс останньої репліки прощання менеджера
+        farewell_index = None
+        for i, line in enumerate(full_text_lines):
+            if line.lower().startswith("менеджер:"):
+                if any(m in line.lower() for m in farewell_markers_check):
+                    farewell_index = i
+
+        # Знаходимо індекс лайки клієнта
+        profanity_index = None
+        profanity_words = ["блять", "бля", "хуй", "пізда", "єбать", "сука", "нахуй"]
+        for i, line in enumerate(full_text_lines):
+            if line.lower().startswith("клієнт:"):
+                if any(w in line.lower() for w in profanity_words):
+                    profanity_index = i
+
+        # Якщо лайка після прощання — не штрафуємо
+        if farewell_index is not None and profanity_index is not None and profanity_index > farewell_index:
+            pass  # лайка після прощання — ігноруємо
+        else:
+            s["Робота із запереченнями"] = 10
+
         return apply_call_completion_rules(s, f, meta)
 
     if objection_interrupted:
