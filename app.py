@@ -74,6 +74,19 @@ st.markdown("""
 
 check_date = st.date_input("Дата перевірки", datetime.today())
 
+with st.expander("⚙️ Службові інструменти", expanded=False):
+    col_s1, col_s2, col_s3 = st.columns(3)
+    with col_s1:
+        if st.button("🧹 Скинути весь кеш", key="clear_all_cache"):
+            st.cache_data.clear()
+            st.success("Весь кеш очищено")
+    with col_s2:
+        if st.button("🗑️ Скинути кеш транскрипцій", key="clear_transcript_cache"):
+            st.session_state["_clear_transcript_cache"] = True
+            st.rerun()
+    with col_s3:
+        st.toggle("🔍 Debug mode", value=False, key="debug_mode")
+
 qa_managers_list = [
     "Дар'я", "Надя", "Настя", "Владимира", "Діана", "Руслана", "Олексій", "Катерина"
 ]
@@ -161,94 +174,6 @@ if not managers_config:
         f"raw_rows={managers_meta['raw_rows_count']}, "
         f"valid_rows={managers_meta['valid_rows_count']}"
     )
-
-# ================= INPUT =================
-if "results" not in st.session_state or not isinstance(st.session_state["results"], dict):
-    st.session_state["results"] = {}
-
-calls = []
-call_columns = st.columns(5)
-
-for idx, col in enumerate(call_columns, start=1):
-    with col:
-        with st.expander(f"📞 Дзвінок {idx}", expanded=True):
-            audio_url = st.text_input("Посилання", key=f"url_{idx}")
-            qa_manager = st.selectbox("QA", qa_managers_list, key=f"qa_{idx}")
-            selected_project = st.selectbox(
-                "Проєкт",
-                projects_list,
-                index=None,
-                placeholder="Оберіть проєкт",
-                key=f"project_{idx}",
-                disabled=not projects_list
-            )
-            project_managers = [
-                item for item in managers_config
-                if item["project"] == selected_project
-            ]
-            manager_names = [item["manager_name"] for item in project_managers]
-            selected_manager = st.selectbox(
-                "Менеджер РЕТ",
-                manager_names,
-                index=None,
-                placeholder="Оберіть менеджера",
-                key=f"ret_{idx}",
-                disabled=not manager_names
-            )
-            selected_manager_data = next(
-                (item for item in project_managers if item["manager_name"] == selected_manager),
-                None
-            )
-            client_id = st.text_input("ID", key=f"client_{idx}")
-            call_date = st.text_input("Дата", key=f"date_{idx}")
-            bonus_check = st.selectbox(
-                "Бонус",
-                ["правильно нараховано", "помилково нараховано", "не потрібно"],
-                key=f"bonus_{idx}"
-            )
-            repeat_call = st.selectbox(
-                "Передзвон",
-                ["так, був протягом години", "так, був протягом 2 годин", "ні, не було"],
-                key=f"repeat_{idx}"
-            )
-            call_completion_status = st.selectbox(
-                "Завершення виклику",
-                call_completion_statuses,
-                key=f"call_completion_{idx}"
-            )
-            manager_comment = st.text_area("Коментар", key=f"comment_{idx}")
-
-        calls.append({
-            "url": audio_url.strip(),
-            "qa_manager": qa_manager,
-            "project": selected_project or "",
-            "ret_manager": selected_manager or "",
-            "ret_sheet_id": selected_manager_data["sheet_id"] if selected_manager_data else "",
-            "client_id": client_id,
-            "call_date": call_date,
-            "check_date": check_date.strftime("%d-%m-%Y"),
-            "bonus_check": bonus_check,
-            "repeat_call": repeat_call,
-            "call_completion_status": call_completion_status,
-            "manager_comment": manager_comment,
-        })
-
-        result = st.session_state["results"].get(idx - 1)
-        if result:
-            st.markdown(f"#### 📊 Аналіз дзвінка {idx}")
-            df = pd.DataFrame(
-                list(result["scores"].items()),
-                columns=["Критерій", "Оцінка"]
-            )
-            df["Оцінка"] = df["Оцінка"].apply(lambda x: f"{float(x):.1f}")
-            st.table(df)
-
-            total = sum(result["scores"].values())
-            st.success(f"Загальний бал: {total:.1f}")
-
-            st.markdown("##### 💬 Коментар QA")
-            for line in result["comment"].split("\n"):
-                st.write(line)
 
 # ================= TRANSCRIPTION =================
 INCOMPLETE_TAIL_TOKENS = {
@@ -577,6 +502,11 @@ def transcribe_audio_cached(url, keyterms=()):
         return {"ok": False, "error": f"Transcription exception: {str(e)}", "transcript": None}
 
 
+if st.session_state.pop("_clear_transcript_cache", False):
+    transcribe_audio_cached.clear()
+    st.success("Кеш транскрипцій очищено")
+
+
 def transcribe_audio(url, keyterms=()):
     result = transcribe_audio_cached(url, keyterms=tuple(keyterms))
     if not result["ok"]:
@@ -650,17 +580,6 @@ def clean_transcript_cached(raw_transcript, cache_version, manager_name=""):
     except Exception as e:
         st.warning(f"Помилка обробки транскрипту: {e}")
         return raw_transcript
-
-
-if st.button("🧨 Скинути весь кеш", type="secondary"):
-    st.cache_data.clear()
-    st.success("Весь кеш очищено")
-
-
-if st.button("🗑️ Скинути кеш транскрипцій", type="secondary"):
-    transcribe_audio_cached.clear()
-    clean_transcript_cached.clear()
-    st.success("Кеш транскрипцій очищено")
 
 
 # ================= DICT =================
@@ -2809,6 +2728,94 @@ def apply_call_completion_rules(scores, features, meta):
 
     return scores
 
+# ================= INPUT =================
+if "results" not in st.session_state or not isinstance(st.session_state["results"], dict):
+    st.session_state["results"] = {}
+
+calls = []
+call_columns = st.columns(5)
+
+for idx, col in enumerate(call_columns, start=1):
+    with col:
+        with st.expander(f"📞 Дзвінок {idx}", expanded=True):
+            audio_url = st.text_input("Посилання", key=f"url_{idx}")
+            qa_manager = st.selectbox("QA", qa_managers_list, key=f"qa_{idx}")
+            selected_project = st.selectbox(
+                "Проєкт",
+                projects_list,
+                index=None,
+                placeholder="Оберіть проєкт",
+                key=f"project_{idx}",
+                disabled=not projects_list
+            )
+            project_managers = [
+                item for item in managers_config
+                if item["project"] == selected_project
+            ]
+            manager_names = [item["manager_name"] for item in project_managers]
+            selected_manager = st.selectbox(
+                "Менеджер РЕТ",
+                manager_names,
+                index=None,
+                placeholder="Оберіть менеджера",
+                key=f"ret_{idx}",
+                disabled=not manager_names
+            )
+            selected_manager_data = next(
+                (item for item in project_managers if item["manager_name"] == selected_manager),
+                None
+            )
+            client_id = st.text_input("ID", key=f"client_{idx}")
+            call_date = st.text_input("Дата", key=f"date_{idx}")
+            bonus_check = st.selectbox(
+                "Бонус",
+                ["правильно нараховано", "помилково нараховано", "не потрібно"],
+                key=f"bonus_{idx}"
+            )
+            repeat_call = st.selectbox(
+                "Передзвон",
+                ["так, був протягом години", "так, був протягом 2 годин", "ні, не було"],
+                key=f"repeat_{idx}"
+            )
+            call_completion_status = st.selectbox(
+                "Завершення виклику",
+                call_completion_statuses,
+                key=f"call_completion_{idx}"
+            )
+            manager_comment = st.text_area("Коментар", key=f"comment_{idx}")
+
+        calls.append({
+            "url": audio_url.strip(),
+            "qa_manager": qa_manager,
+            "project": selected_project or "",
+            "ret_manager": selected_manager or "",
+            "ret_sheet_id": selected_manager_data["sheet_id"] if selected_manager_data else "",
+            "client_id": client_id,
+            "call_date": call_date,
+            "check_date": check_date.strftime("%d-%m-%Y"),
+            "bonus_check": bonus_check,
+            "repeat_call": repeat_call,
+            "call_completion_status": call_completion_status,
+            "manager_comment": manager_comment,
+        })
+
+        result = st.session_state["results"].get(idx - 1)
+        if result:
+            st.markdown(f"#### 📊 Аналіз дзвінка {idx}")
+            df = pd.DataFrame(
+                list(result["scores"].items()),
+                columns=["Критерій", "Оцінка"]
+            )
+            df["Оцінка"] = df["Оцінка"].apply(lambda x: f"{float(x):.1f}")
+            st.table(df)
+
+            total = sum(result["scores"].values())
+            st.success(f"Загальний бал: {total:.1f}")
+
+            st.markdown("##### 💬 Коментар QA")
+            for line in result["comment"].split("\n"):
+                st.write(line)
+
 # ================= RUN =================
 col1, col2 = st.columns(2)
 run_openai = col1.button("🚀 OpenAI", type="primary")
@@ -2877,15 +2884,15 @@ if run_openai or run_claude:
 
             scores = score_call(features, call, clean_dialogue)
 
-            # ТИМЧАСОВО
-            debug_data = {
-                "client_wants_to_end": features.get("client_wants_to_end"),
-                "continuation_level": features.get("continuation_level"),
-                "conversation_logically_completed": features.get("conversation_logically_completed"),
-                "followup_type": features.get("followup_type"),
-                "scores": dict(scores),
-            }
-            append_debug_log(google_client, call.get("client_id", ""), debug_data)
+            if st.session_state.get("debug_mode"):
+                debug_data = {
+                    "client_wants_to_end": features.get("client_wants_to_end"),
+                    "continuation_level": features.get("continuation_level"),
+                    "conversation_logically_completed": features.get("conversation_logically_completed"),
+                    "followup_type": features.get("followup_type"),
+                    "scores": dict(scores),
+                }
+                append_debug_log(google_client, call.get("client_id", ""), debug_data)
             comment = build_readable_qa_comment(features, scores, call)
             comment_for_sheet = format_comment_for_sheet(comment)
             ai_label = "OpenAI" if run_openai else "Claude"
