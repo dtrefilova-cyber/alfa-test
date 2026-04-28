@@ -2859,24 +2859,21 @@ if run_openai or run_claude:
             features = analysis_result.get("features", {})
             features = run_all_validators(features, clean_dialogue, call, kb_data)
 
-            # ТИМЧАСОВО — видалити після тестування
-            debug_data = {
-                "is_limited_dialogue": features.get("is_limited_dialogue"),
-                "client_driving": features.get("client_driving_or_no_phone"),
-                "client_wants_to_end": features.get("client_wants_to_end"),
-                "continuation_level": features.get("continuation_level"),
-                "objection_detected": features.get("objection_detected"),
-                "manager_text_snippet": " ".join([
-                    l for l in (clean_dialogue or "").splitlines()
-                    if l.lower().startswith("менеджер:")
-                ])[:300],
-            }
-            append_debug_log(google_client, call.get("client_id", ""), debug_data)
             if not features:
                 st.warning("Помилка аналізу")
                 continue
 
             scores = score_call(features, call, clean_dialogue)
+
+            # ТИМЧАСОВО
+            debug_data = {
+                "client_wants_to_end": features.get("client_wants_to_end"),
+                "continuation_level": features.get("continuation_level"),
+                "conversation_logically_completed": features.get("conversation_logically_completed"),
+                "followup_type": features.get("followup_type"),
+                "scores": dict(scores),
+            }
+            append_debug_log(google_client, call.get("client_id", ""), debug_data)
             comment = build_readable_qa_comment(features, scores, call)
             comment_for_sheet = format_comment_for_sheet(comment)
             ai_label = "OpenAI" if run_openai else "Claude"
