@@ -1723,6 +1723,13 @@ def validate_objection_and_retention(features, dialogue):
         "передзвоніть",
         "за кермом",
         "незручно говорити",
+        "нема часу",
+        "немає часу",
+        "зараз не можу",
+        "не можу зараз говорити",
+        "зараз незручно",
+        "не до розмови",
+        "зараз не до",
     ]
     product_objection_markers = [
         "не хочу грати",
@@ -1818,7 +1825,15 @@ def validate_objection_and_retention(features, dialogue):
     callback_only = (
         any(m in manager_text for m in callback_only_markers)
         and not real_retention
+        and not has_any_marker(manager_text, real_retention_markers)
     )
+    if not callback_only:
+        # Додаткова перевірка через прямий пошук без пробілів
+        callback_only = (
+            any(m.replace(" ", "") in manager_text.replace(" ", "")
+                for m in callback_only_markers)
+            and not real_retention
+        )
     manager_argumented = (
         has_any_marker(manager_text, real_retention_markers)
         or has_any_marker(manager_text, objection_argument_markers)
